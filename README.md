@@ -135,6 +135,14 @@ Et le test de bout en bout, dans un vrai Chromium, du choix de la photo jusqu'à
 npm run build && node scripts/smoke.mjs   # attend une photo dans fixtures/
 ```
 
+Et la mesure d'exactitude, contre une page transcrite à la main
+(`fixtures/<photo>.truth.json` à côté de la photo) :
+
+```bash
+node --experimental-strip-types --import ./scripts/register-ts.mjs \
+  scripts/score.mjs fixtures/ma-photo.jpg --detail
+```
+
 ## Architecture
 
 ```
@@ -158,22 +166,44 @@ c'est ce qui permet de les faire tourner sous Node dans les harnais de calibrati
 
 ## Ce que ça donne en vrai
 
-Mesuré sur une photo de test réelle — un *Sport Cérébral* photographié à main levée, page
-bombée, inclinée de quelques degrés, éclairage inégal, **sans recadrage manuel** :
+Mesuré par `scripts/score.mjs` contre une page **transcrite à la main**, ce qui est la
+seule métrique qui compte : combien de définitions sont lues au caractère près.
 
-| | Résultat |
-| --- | --- |
-| Grille détectée | 14 × 18 (la vraie grille + 1 bordure parasite) |
-| Définitions trouvées | 63 cases, dont les cases à deux définitions découpées en deux |
-| Définitions lues correctement | **~80 %** (60 sur 75 non vides) |
-| Durée de l'import | ~30 s sur un mobile récent |
+Sur une page à plat, bien éclairée, sans recadrage manuel :
 
-Le mot mystère (définition en marge + cases numérotées) se saisit à la main, en une passe
-dédiée : voir les limites plus bas.
+| | Résultat | Vérité |
+| --- | --- | --- |
+| Grille | 14 × 19 | 14 × 20 |
+| Cases-définitions | 68 | **41** |
+| Filets internes | 48 | **30** |
+| Définitions produites | 116 | **71** |
+| **Exactes** | **31 (43,7 %)** | |
+| Presque (≤ 2 corrections) | 6 (8,5 %) | |
+| Manquantes | 34 (47,9 %) | |
+| **Parasites** | **56** | |
 
-Le recentrage des crops sur l'encre avant reconnaissance est ce qui compte le plus : il fait
-passer la lecture de ~24 % à ~80 %, parce qu'il rend l'OCR insensible à un cadrage de case
-décalé de quelques pour cent.
+### Attention aux métriques indirectes
+
+Les chiffres publiés avant l'existence de `score.mjs` étaient faux — pas les
+nombres, la question posée. Ils comptaient les chaînes qui *ressemblent* à des
+mots (majuscules, une voyelle, 4 caractères), or `"LEUVT EEE ÇA REMPL LE VERRI"`
+satisfait ce test. Le proxy annonçait ~80 % là où la réalité est ~44 %.
+
+C'est la leçon la plus utile de ce projet : **une métrique indirecte peut faire
+croire à un succès pendant des heures.** Toute décision de réglage doit se juger
+contre ce que la page dit réellement.
+
+### La cause dominante
+
+Le tableau la désigne : la sur-détection. 27 fausses cases-définitions et 18 faux
+filets produisent à eux seuls la cinquantaine de lectures parasites, et ces
+fausses cases **volent aussi des cases-lettres** (198 détectées contre 210
+réelles), ce qui casse des mots.
+
+Le mécanisme suspecté est le papier. Ces pages laissent passer l'impression du
+verso, et le seuillage **localement** adaptatif normalise cette pâleur en la
+promouvant au rang d'encre. Un critère de noirceur **absolue**, référencé au
+niveau du papier de la page, sépare les deux ; un critère local ne peut pas.
 
 ## Limites connues
 
