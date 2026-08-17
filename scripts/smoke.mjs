@@ -93,8 +93,19 @@ await shot('1-library')
 
 console.log('\n2. import: pick a photo')
 await page.getByRole('button', { name: /Nouvelle grille/ }).click()
-await page.getByText('Photographie la grille').waitFor({ timeout: 5000 })
-await page.setInputFiles('input[type=file]', 'fixtures/sport-cerebral-42.jpg')
+await page.getByText('Ajoute une grille').waitFor({ timeout: 5000 })
+await check('both a camera and a gallery entry point are offered', async () => {
+  await page.getByRole('button', { name: /Prendre une photo/ }).waitFor({ timeout: 5000 })
+  await page.getByRole('button', { name: /Importer une photo/ }).waitFor({ timeout: 5000 })
+  const camera = await page.locator('input[data-role=camera][capture]').count()
+  const library = await page.locator('input[data-role=library]:not([capture])').count()
+  if (camera !== 1 || library !== 1) {
+    throw new Error(`expected one capture input and one plain one, got ${camera}/${library}`)
+  }
+})
+await shot('1b-pick')
+// Use the gallery input: a headless browser has no camera to hand.
+await page.setInputFiles('input[data-role=library]', 'fixtures/sport-cerebral-42.jpg')
 
 await check('crop screen with a detected grid', async () => {
   await page.getByText(/Cadre la grille/).waitFor({ timeout: 20000 })

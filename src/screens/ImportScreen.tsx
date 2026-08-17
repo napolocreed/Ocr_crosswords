@@ -47,7 +47,8 @@ export function ImportScreen({ onDone, onCancel }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [title, setTitle] = useState('')
   const [ocrProgress, setOcrProgress] = useState({ done: 0, total: 0, note: '' })
-  const fileInput = useRef<HTMLInputElement>(null)
+  const cameraInput = useRef<HTMLInputElement>(null)
+  const libraryInput = useRef<HTMLInputElement>(null)
 
   /**
    * The photo as the user currently sees it, rotation applied.
@@ -61,6 +62,14 @@ export function ImportScreen({ onDone, onCancel }: Props) {
     () => (photo && turns ? rotateRgba(photo, turns) : photo),
     [photo, turns],
   )
+
+  /** Shared by both pickers: the source of the image makes no difference after this. */
+  const onFilePicked = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (file) void pick(file)
+    // Cleared so choosing the same file twice in a row still fires a change.
+    event.target.value = ''
+  }
 
   const pick = async (file: File) => {
     setError(null)
@@ -196,30 +205,55 @@ export function ImportScreen({ onDone, onCancel }: Props) {
         </div>
         <div className="scroll">
           <div className="card">
-            <h2 style={{ margin: '0 0 8px', fontSize: 17 }}>Photographie la grille</h2>
+            <h2 style={{ margin: '0 0 8px', fontSize: 17 }}>Ajoute une grille</h2>
             <p className="muted" style={{ margin: '0 0 14px' }}>
               Pose le magazine bien à plat, en lumière homogène, et cadre la grille seule — sans
               la page en face. Tu pourras ajuster le cadrage juste après.
             </p>
+            {/*
+              Two inputs rather than one: `capture` sends the user straight to the
+              camera on a phone, which is what you want for a magazine in front of
+              you, but it also removes any way to reach a photo taken earlier. The
+              gallery input has no `capture`, so it opens the picker instead.
+            */}
             <input
-              ref={fileInput}
+              ref={cameraInput}
               type="file"
               accept="image/*"
               capture="environment"
               hidden
-              onChange={(event) => {
-                const file = event.target.files?.[0]
-                if (file) void pick(file)
-                event.target.value = ''
-              }}
+              aria-hidden="true"
+              data-role="camera"
+              onChange={onFilePicked}
+            />
+            <input
+              ref={libraryInput}
+              type="file"
+              accept="image/*"
+              hidden
+              aria-hidden="true"
+              data-role="library"
+              onChange={onFilePicked}
             />
             <button
               type="button"
               className="btn primary wide"
-              onClick={() => fileInput.current?.click()}
+              onClick={() => cameraInput.current?.click()}
             >
               📷 Prendre une photo
             </button>
+            <button
+              type="button"
+              className="btn wide"
+              style={{ marginTop: 10 }}
+              onClick={() => libraryInput.current?.click()}
+            >
+              ⤵ Importer une photo
+            </button>
+            <p className="hint">
+              Une photo déjà prise fait tout aussi bien l’affaire, du moment que la grille est
+              nette et entière.
+            </p>
           </div>
           {error && (
             <div className="card" style={{ borderColor: '#5a2b2b' }}>
