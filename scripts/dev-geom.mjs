@@ -55,6 +55,25 @@ for (const file of files) {
   }
   grid = trimUnusedEdges(grid, reach)
 
+  if (process.argv.includes('--map')) {
+    // Before trimming, with the frame score per line: this is what decides which
+    // border rows are grid and which are margin, so it is what to look at when a
+    // grid comes out smaller than the page.
+    const line = (kind, i) => {
+      const n = kind === 'row' ? detected.cols : detected.rows
+      const cells = Array.from({ length: n }, (_, k) =>
+        kind === 'row' ? detected.cells[i * detected.cols + k] : detected.cells[k * detected.cols + i],
+      )
+      const frame = cells.reduce((a, c) => a + c.frameScore, 0) / cells.length
+      const map = cells.map((c) => (c.kind === 'clue' ? 'C' : c.kind === 'block' ? '#' : '.')).join('')
+      return `${frame.toFixed(3)}  ${map}`
+    }
+    const all = detected.cells.map((c) => c.frameScore).sort((a, b) => a - b)
+    console.log(`  raw ${detected.cols} x ${detected.rows}, median frame ${all[all.length >> 1].toFixed(3)}`)
+    for (let r = 0; r < detected.rows; r++) console.log(`   row ${String(r).padStart(2)}  ${line('row', r)}`)
+    for (let c = 0; c < detected.cols; c++) console.log(`   col ${String(c).padStart(2)}  ${line('col', c)}`)
+  }
+
   const clue = grid.cells.filter((c) => c.kind === 'clue')
   const split = clue.filter((c) => c.split !== undefined)
   const letters = grid.cells.filter((c) => c.kind === 'letter')

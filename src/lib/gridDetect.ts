@@ -35,6 +35,24 @@ const HAIRLINE_RUN = 0.7
 const HAIRLINE_DEPTH = 0.1
 
 /**
+ * How much of the square, at each end, the hairline search skips.
+ *
+ * Only enough to stay off the square's own rules. It was 0.26, which hides a real
+ * hairline whenever the fitted box sits a fifth of a cell low — and the box does,
+ * on a bowed page.
+ */
+const HAIRLINE_MARGIN = 0.17
+
+/**
+ * Slope range the run test follows, as a fraction of the measured width.
+ *
+ * A hairline on a page photographed a degree or two off square is not flat. Three
+ * on the second test page run 0.71–0.83 measured flat, all near the 0.7 threshold,
+ * and 0.90–1.00 measured along their own slope.
+ */
+const HAIRLINE_SLOPE = 0.035
+
+/**
  * Ink either side of the rule, as a fraction of the half's area. A hairline
  * separates two definitions, so both halves must carry text: below the floor one
  * half is blank (the candidate is the square's own border, let in by a grid that
@@ -394,41 +412,56 @@ export function refineSplits(
 }
 
 /**
- * Fraction of a cell's extent a line of ink must cover to be a rule rather than
- * type.
- *
- * Measured across a cell's central 70% — so the perpendicular rules and any
- * hairline are excluded — a printed rule covers essentially all of it, while the
- * darkest column through four stacked lines of capitals covers a little over
- * half.
- */
-const RULE_FILL = 0.68
-
-/**
  * Fraction of the grid's median frame agreement below which a border row or
  * column counts as unprinted, and so as margin rather than grid.
  *
- * Set midway across a wide gap: on the two test photos the phantom edges score
- * 0.29, 0.02 and 0.01 against medians near 0.92, and the weakest real edge
- * scores 0.78. Anything from about 0.4 to 0.8 of the median separates them.
+ * Sits at the middle of the gap measured over four pages, in units of each page's
+ * own median: real border rows and columns score 0.68 to 0.84, phantom ones 0.00
+ * to 0.32. Nothing has ever been observed between.
+ *
+ * It was 0.7 first, which is inside the real cluster, and that was an overfit to
+ * one photo — the page it was tuned on has a median of 0.92, so 0.7 of it is 0.64
+ * and the grid's own outer row, at 0.78, cleared it. A crisper page has a median
+ * of 1.00, and the same fraction then demands 0.70 from an outer row that scores
+ * 0.69: it was peeled, and its six definition squares went with it, along with
+ * two real columns. A threshold has to be placed against the spread of the thing
+ * it separates, not against one page's comfortable margin.
  */
-const UNPRINTED_EDGE = 0.7
+const UNPRINTED_EDGE = 0.5
 
 /** Where an edge starts before it is fitted, as a fraction of the cell. */
 const TEXT_INSET = 0.045
 
 /**
- * How far past the nominal bound fitting may reach, as a fraction of the cell.
+ * How far past the nominal bound fitting may reach when no rule is found there,
+ * as a fraction of the cell.
  *
- * Negative — i.e. outside the cell — because the bound is only ever approximately
- * where the rule is, and being a few pixels short of the true square cuts type
- * just as effectively as insetting too far did. Cell 0,2's box lands 12px below
- * its printed rule, which was enough to shave the caps off `CERCLE` and have it
- * read as `VENVLLE`. Reaching outward is safe here only because the fit stops at
- * a rule, and before that at the first clear line: this is a backstop, not the
- * usual stopping condition.
+ * Negative — i.e. outside the cell — because a bound is only ever approximately
+ * where its rule is, and falling a few pixels short of the true square cuts type
+ * just as effectively as insetting too far did. Cell 0,2's box landed 12px below
+ * its printed rule, enough to shave the caps off `CERCLE` and have it read as
+ * `VENVLLE`.
  */
 const TEXT_LIMIT = -0.15
+
+/** Coverage a line must reach, at its darkest, for a rule to be printed there. */
+const RULE_PEAK = 0.6
+
+/** Coverage down to which a rule's soft skirt still counts as part of it. */
+const RULE_SKIRT = 0.15
+
+/** How far from a bound to look for its rule, as a fraction of the cell. */
+const RULE_SEARCH = 0.09
+
+/**
+ * Thickest a rule's skirt may be, as a fraction of the cell.
+ *
+ * This is what stops a dense line of type being mistaken for a rule and the crop
+ * being started below it. The two are well apart: on fleches-niveau2-p43 a rule
+ * covers 8 rows of a 125-row cell, 6%, while a line of capitals covers 15 rows of
+ * 113, 13%.
+ */
+const RULE_THICKNESS = 0.115
 
 /**
  * Fits a crop box to the type inside a definition square, so that no glyph is cut
@@ -452,14 +485,21 @@ const TEXT_LIMIT = -0.15
  *
  * So each edge is instead *fitted*, monotonically: it starts at a safe inset and
  * moves outward only while it is still cutting through ink, stopping at the first
- * clear line — the gutter the page prints between type and rule — or at a line
- * that is rule-like. The starting position is the old behaviour, so an edge that
- * was already clear is left exactly where it was; only edges that were demonstrably
- * cutting type move at all.
+ * clear line — the gutter the page prints between type and rule. The starting
+ * position is the old behaviour, so an edge that was already clear is left
+ * exactly where it was; only edges that were demonstrably cutting type move.
+ *
+ * What bounds that walk is the rule's own measured extent, not a guess. A single
+ * row's coverage will not do it: a rule photographed at a slight angle is blurred
+ * across several rows and its best one reaches only about three quarters of the
+ * band, which is inside the range a line of type can reach — so the walk read the
+ * rule's soft edge as type and stepped straight across it, taking the whole rule
+ * into the crop, where `ESPACE DE JEU` came back as `D ESPACE DE JEU`. Measuring
+ * the skirt instead separates them cleanly, by thickness rather than by darkness.
  *
  * Coordinates are in `gray`'s own space, and `limit` bounds how far out any edge
- * may travel — for a stacked square that keeps each half on its own side of the
- * hairline.
+ * may travel where no rule is found — for a stacked square it also keeps each half
+ * on its own side of the hairline.
  */
 export function fitTextBox(
   gray: GrayImage,
@@ -502,32 +542,73 @@ export function fitTextBox(
   const rowMin = Math.max(3, Math.round((bx - ax) * 0.04))
 
   /**
+   * The first line inside the rule printed at a bound, or null where none is.
+   *
+   * The rule is found by its *shape*, not its darkness: a run of inked lines,
+   * peaking well above anything type reaches and thin enough that type cannot be
+   * mistaken for it. Photographed at an angle the run is blurred across several
+   * lines, so its peak alone is not decisive — the run is.
+   */
+  const ruleEdge = (
+    ink: (v: number) => number,
+    span: number,
+    extent: number,
+    bound: number,
+    sign: number,
+  ): number | null => {
+    const search = Math.max(3, Math.round(extent * RULE_SEARCH))
+    const thickest = Math.max(3, Math.round(extent * RULE_THICKNESS))
+    let peak = RULE_PEAK
+    let peakAt: number | null = null
+    for (let d = -search; d <= search; d++) {
+      const value = ink(bound + d) / span
+      if (value > peak) {
+        peak = value
+        peakAt = bound + d
+      }
+    }
+    if (peakAt === null) return null
+
+    // Follow the run both ways down to the skirt; a run too thick to be a rule is
+    // a line of type, and starting the crop past it would delete that line.
+    let outer = peakAt
+    while (Math.abs(outer - peakAt) <= thickest && ink(outer + sign) / span >= RULE_SKIRT) {
+      outer += sign
+    }
+    let inner = peakAt
+    while (Math.abs(inner - peakAt) <= thickest && ink(inner - sign) / span >= RULE_SKIRT) {
+      inner -= sign
+    }
+    if (Math.abs(inner - outer) + 1 > thickest) return null
+    return inner - sign * Math.max(2, Math.round(extent * 0.015))
+  }
+
+  /**
    * Places one edge between the rule and the type. `sign` is the direction of
    * travel outward: -1 toward a low bound, +1 toward a high one.
    */
   const fit = (
     ink: (v: number) => number,
     span: number,
+    extent: number,
     start: number,
     stop: number,
+    bound: number,
     sign: number,
     min: number,
   ): number => {
-    let v = start
-    // First, come off the rule if the edge has landed on one — which happens
-    // whenever the fitted bound overshoots its square. Left in, the rule reaches
-    // the crop as a black bar and Tesseract reads it as a character.
-    const clearance = Math.max(2, Math.round(span * 0.02))
-    for (let guard = 0; ink(v) / span >= RULE_FILL && guard < span; guard++) v -= sign
-    if (v !== start) return v - sign * clearance
+    // Where the rule is, it is the wall: the walk may reach it and no further,
+    // and an edge that has landed beyond it is brought back inside.
+    const wall = ruleEdge(ink, span, extent, bound, sign)
+    const floor = wall === null ? stop : wall
+    let v = sign < 0 ? Math.max(start, floor) : Math.min(start, floor)
 
     if (ink(v) < min) return v // already clear: no type is being cut
     // Otherwise the edge is cutting through type, so walk out to the gutter the
     // page prints between the type and the rule.
     for (;;) {
       const next = v + sign
-      if (sign < 0 ? next < stop : next > stop) break
-      if (ink(next) / span >= RULE_FILL) break // reached the rule; keep the paper
+      if (sign < 0 ? next < floor : next > floor) break
       v = next
       if (ink(v) < min) break
     }
@@ -537,10 +618,10 @@ export function fitTextBox(
   const colSpan = Math.max(1, by - ay)
   const rowSpan = Math.max(1, bx - ax)
   return {
-    x0: fit(colInk, colSpan, region.x0, limit.x0, -1, colMin),
-    x1: fit(colInk, colSpan, region.x1, limit.x1, 1, colMin),
-    y0: fit(rowInk, rowSpan, region.y0, limit.y0, -1, rowMin),
-    y1: fit(rowInk, rowSpan, region.y1, limit.y1, 1, rowMin),
+    x0: fit(colInk, colSpan, w, region.x0, limit.x0, region.x0, -1, colMin),
+    x1: fit(colInk, colSpan, w, region.x1, limit.x1, region.x1, 1, colMin),
+    y0: fit(rowInk, rowSpan, h, region.y0, limit.y0, region.y0, -1, rowMin),
+    y1: fit(rowInk, rowSpan, h, region.y1, limit.y1, region.y1, 1, rowMin),
   }
 }
 
@@ -571,15 +652,19 @@ export function textBoxBounds(cell: { x0: number; y0: number; x1: number; y1: nu
 /**
  * Finds a definition square's internal hairline: the longest unbroken dark run.
  *
-
-/**
- * Finds a definition square's internal hairline: the longest unbroken dark run.
- *
  * Looking for the darkest row instead — which is what this did first — finds the
  * boldest line of type at least as often as it finds the rule, because at photo
  * resolution a line of caps averages darker than a one-pixel rule. That both
  * invents hairlines in single-definition squares and, worse, puts the split in
  * the middle of a word in squares that really are divided.
+ *
+ * The run is measured along a range of slopes, not across a pixel row. A page
+ * photographed a degree or two off square drops a hairline two or three pixels
+ * over the width of one cell, which is enough to break it in every single row:
+ * measured on the second test page, three hairlines that are plainly printed
+ * reach a longest run of 0.71–0.83 flat and 0.90–1.00 once the slope is allowed
+ * to follow them. This is the same reason the boundary chain projects along
+ * slanted lines rather than summing rows.
  *
  * @returns the hairline's height as a 0–1 fraction of the cell, or null
  */
@@ -594,8 +679,13 @@ function findHairlineInGray(
   const bx = Math.min(gray.width, Math.round(x1 - (x1 - x0) * 0.2))
   const width = bx - ax
   if (width <= 6) return null
-  // Stay clear of the square's own top and bottom rules.
-  const margin = (y1 - y0) * 0.26
+  // Stay clear of the square's own top and bottom rules — but only just. At 0.26
+  // this excluded the outer quarter of the square at each end, and a box sitting
+  // a little low then hides a real hairline inside the excluded margin rather
+  // than merely off-centre: on the second test page a hairline 20% down its own
+  // box was invisible to this search. The thickness and two-halves tests below
+  // are what keep the square's own rules out, not this margin.
+  const margin = (y1 - y0) * HAIRLINE_MARGIN
   const top = Math.max(0, Math.round(y0 + margin))
   const bottom = Math.min(gray.height, Math.round(y1 - margin))
   if (bottom - top < 5) return null
@@ -663,14 +753,23 @@ function findHairlineInGray(
     if (down - up + 1 > thickest) continue
 
     const runLevel = paper - (paper - rowMeans[i]!) * HAIRLINE_RUN_LEVEL
-    const row = (top + i) * gray.width
-    let run = 0
+    // Follow the hairline's own slope: a page a degree off square drops it a few
+    // pixels across the square, which breaks it in every flat row.
+    const drift = Math.max(1, Math.round(width * HAIRLINE_SLOPE))
     let longest = 0
-    for (let x = ax; x < bx; x++) {
-      if (gray.data[row + x]! <= runLevel) {
-        run++
-        if (run > longest) longest = run
-      } else run = 0
+    for (let slope = -drift; slope <= drift; slope++) {
+      let run = 0
+      for (let k = 0; k < width; k++) {
+        const y = top + i + Math.round((slope * k) / width)
+        if (y < 0 || y >= gray.height) {
+          run = 0
+          continue
+        }
+        if (gray.data[y * gray.width + ax + k]! <= runLevel) {
+          run++
+          if (run > longest) longest = run
+        } else run = 0
+      }
     }
     if (longest <= bestRun || longest / width < HAIRLINE_RUN) continue
 

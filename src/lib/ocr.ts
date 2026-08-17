@@ -10,9 +10,16 @@ import { createWorker, PSM, type Worker } from 'tesseract.js'
  * device in airplane mode.
  */
 
-/** Uppercase French plus the punctuation that shows up in definitions. */
+/**
+ * Uppercase French plus the punctuation that shows up in definitions.
+ *
+ * The guillemets and the question mark earn their place. A definition quotes the
+ * form of its own answer — `UNE RÉPONSE À « OÙ ? »` — and with those glyphs
+ * missing from the list Tesseract does not omit them, it spends them on the
+ * nearest shape it is allowed: that clue came back as `UNE REPONSE A OU 7`.
+ */
 const UPPERCASE_WHITELIST =
-  "ABCDEFGHIJKLMNOPQRSTUVWXYZÀÂÄÇÉÈÊËÎÏÔÖÙÛÜŸÆŒ0123456789'’-.,()/ "
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZÀÂÄÇÉÈÊËÎÏÔÖÙÛÜŸÆŒ0123456789'’-.,()/ «»?"
 
 const MIXED_WHITELIST =
   UPPERCASE_WHITELIST + 'abcdefghijklmnopqrstuvwxyzàâäçéèêëîïôöùûüÿæœ'
@@ -83,8 +90,15 @@ export class OcrEngine {
             }
           : {}),
       })
-      // The French dictionary is left ON: definitions are made of real words,
-      // and it recovers a lot of accents that the raw classifier drops.
+      // No dictionary flags here, and it is not an oversight. `load_system_dawg`
+      // and `load_freq_dawg` only take effect at initialisation — createWorker's
+      // fourth argument, never setParameters — and setting them there changes not
+      // one character of the output on either fixture page, with or without a
+      // whitelist. Under `oem: 1` the LSTM decoder in the tesseract.js core does
+      // not consult the dawgs at all, even though fra.traineddata ships an 800 kB
+      // LSTM_SYSTEM_DAWG. Recognition cannot be fixed by toggling them; the note
+      // this replaced claimed the dictionary was recovering accents, which was a
+      // guess, and measurement says it does nothing.
       await worker.setParameters({
         tessedit_char_whitelist: uppercase ? UPPERCASE_WHITELIST : MIXED_WHITELIST,
         preserve_interword_spaces: '1',
@@ -171,6 +185,10 @@ const STRAY_TO_LETTER: Record<string, string> = {
 export function cleanClueText(raw: string): string {
   let text = raw
     .replace(/\r/g, '')
+    // The magazine hyphenates to fit the cell ("ABON-\nDANTES"). Only the break
+    // goes, never the hyphen itself: telling a syllable break from a real one
+    // would take a dictionary, and "PAS-DE-\nCALAIS" has to stay hyphenated.
+    .replace(/-[ \t]*\n[ \t]*/g, '-')
     // A definition wraps inside its cell; the line breaks carry no meaning.
     .replace(/[\n\t]+/g, ' ')
     .replace(/ /g, ' ')
@@ -187,13 +205,23 @@ export function cleanClueText(raw: string): string {
     return digit
   })
 
-  return text
+  const tidy = text
     .replace(/\s*'\s*/g, "'")
     .replace(/\s+([,.])/g, '$1')
     .replace(/\s{2,}/g, ' ')
-    .replace(/^[^A-ZÀÂÄÇÉÈÊËÎÏÔÖÙÛÜŸÆŒ0-9(]+/i, '')
-    .replace(/[^A-ZÀÂÄÇÉÈÊËÎÏÔÖÙÛÜŸÆŒ0-9).]+$/i, '')
+    // These two trims strip leading and trailing noise, so every character a
+    // definition may legitimately open or close with has to be listed here — the
+    // guillemets and the question mark included, now that they are recognised.
+    .replace(/^[^A-ZÀÂÄÇÉÈÊËÎÏÔÖÙÛÜŸÆŒ0-9(«]+/i, '')
+    .replace(/[^A-ZÀÂÄÇÉÈÊËÎÏÔÖÙÛÜŸÆŒ0-9).»?]+$/i, '')
     .trim()
+
+  // A bracket with no partner anywhere in the string is one the crop's edge
+  // invented: "PAS MENTEURS )". The matched kind, "TRAÎNER EN LONGUEUR (S')",
+  // carries meaning and is left alone.
+  if (tidy.endsWith(')') && !tidy.includes('(')) return tidy.slice(0, -1).trim()
+  if (tidy.startsWith('(') && !tidy.includes(')')) return tidy.slice(1).trim()
+  return tidy
 }
 
 /**

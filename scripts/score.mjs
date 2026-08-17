@@ -234,7 +234,11 @@ console.log(`spurious        ${String(spurious.length).padStart(3)}  (readings m
 
 if (args.includes('--detail')) {
   console.log(`\n--- near misses ---`)
-  for (const n of near) console.log(`  ${n.edits} edit(s)  "${n.text}"  <-  "${n.truth}"`)
+  // With the cell, so the crop behind a bad reading can be pulled up directly
+  // with dev-cell.mjs instead of being hunted for.
+  for (const n of near) {
+    console.log(`  ${n.r},${n.c}  ${n.edits} edit(s)  "${n.text}"  <-  "${n.truth}"`)
+  }
   console.log(`\n--- missing from output ---`)
   for (const m of remaining) console.log(`  "${m.text}"`)
   console.log(`\n--- spurious readings ---`)
