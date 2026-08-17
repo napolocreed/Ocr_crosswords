@@ -29,6 +29,13 @@ export interface OcrOptions {
    * magazine; turning it off helps on the rare lowercase grid.
    */
   uppercase?: boolean
+  /**
+   * Skip tesseract.js's own cache of the language data. Caching is what you
+   * want in the browser — it saves re-downloading megabytes — but it also means
+   * a cached copy silently wins over `langPath`, so comparing two models
+   * requires turning it off.
+   */
+  noLanguageCache?: boolean
 }
 
 /** Anything tesseract.js accepts: canvas, Blob, Buffer, data URL, path. */
@@ -57,12 +64,13 @@ export class OcrEngine {
 
   private getWorker(onProgress?: (ratio: number) => void): Promise<Worker> {
     this.ready ??= (async () => {
-      const { langPath, corePath, workerPath, uppercase = true } = this.options
+      const { langPath, corePath, workerPath, uppercase = true, noLanguageCache } = this.options
       const worker = await createWorker('fra', 1, {
         langPath,
         // `gzip: false` because we vendor the plain .traineddata rather than
         // the .gz the public CDN serves.
         gzip: false,
+        ...(noLanguageCache ? { cacheMethod: 'none' as const } : {}),
         ...(corePath ? { corePath } : {}),
         ...(workerPath ? { workerPath } : {}),
         // tesseract.js rejects an explicitly undefined logger, so only set the

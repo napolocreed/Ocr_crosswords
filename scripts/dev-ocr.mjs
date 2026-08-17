@@ -71,10 +71,13 @@ console.log(`grid: ${result.cols} x ${result.rows}, pitch ${result.pitchX.toFixe
 const clues = result.cells.filter((c) => c.kind === 'clue' && c.r >= minRow && c.c >= minCol)
 console.log(`${clues.length} definition cells; OCR on the first ${Math.min(limit, clues.length)}\n`)
 
-const engine = new OcrEngine({
-  langPath: new URL('../public/tesseract/lang', import.meta.url).pathname,
-  uppercase: true,
-})
+const langArg = args.indexOf('--langdir')
+const langPath =
+  langArg >= 0 && args[langArg + 1]
+    ? args[langArg + 1]
+    : new URL('../public/tesseract/lang', import.meta.url).pathname
+console.log(`language data: ${langPath}`)
+const engine = new OcrEngine({ langPath, uppercase: true, noLanguageCache: true })
 const t0 = Date.now()
 await engine.init()
 console.log(`worker ready in ${Date.now() - t0}ms\n`)
