@@ -180,6 +180,17 @@ export interface Chain {
 }
 
 /**
+ * What one interpolated line costs against one rule actually seen, when choosing
+ * between candidate pitches.
+ *
+ * Small on purpose. It only ever decides between chains of different pitch, where
+ * it has to overcome nothing more than a tie, and it must stay well under 1 so
+ * that a chain still prefers to bridge a rule too faint to see rather than stop
+ * at it.
+ */
+const INTERPOLATION_COST = 0.35
+
+/**
  * Longest evenly spaced family among the candidates.
  *
  * Every pair proposes a starting pitch; the walk then steps by it and snaps to
@@ -200,7 +211,7 @@ export function bestArithmeticChain(
   minPitch: number,
   maxPitch: number,
 ): Chain {
-  let best: Chain = { lines: [], hits: 0, pitch: 0 }
+  let best: Chain & { score: number } = { lines: [], hits: 0, pitch: 0, score: -Infinity }
   const tolerance = 0.28
   /** Weight given to a newly observed gap when updating the running pitch. */
   const adaptRate = 0.35
@@ -218,13 +229,27 @@ export function bestArithmeticChain(
     return closest
   }
 
+  /**
+   * Consecutive rules a walk may fail to see before it gives up.
+   *
+   * Three, not two. A page's outer rows are the faintest — furthest from the lens,
+   * deepest in the binding's shadow — so a chain that stops at the second miss
+   * stops short of the grid: one test photo's rows ended at 76% of the page,
+   * costing it four rows and twenty definitions. Raising it is only safe because
+   * {@link INTERPOLATION_COST} charges for the invented lines a longer reach
+   * produces, so the extra tolerance cannot be spent running out into the page
+   * header. Measured across five photos, three recovers that page and changes
+   * nothing at all on the other four; four changes nothing further.
+   */
+  const MAX_MISSES = 3
+
   const walk = (origin: number, startPitch: number, direction: 1 | -1) => {
     const out: number[] = []
     let cursor = origin
     let pitch = startPitch
     let hits = 0
     let misses = 0
-    while (misses < 2 && out.length < 64) {
+    while (misses < MAX_MISSES && out.length < 64) {
       const target = cursor + direction * pitch
       const found = snap(target, pitch * tolerance)
       if (found !== null && Math.abs(found - cursor) > pitch * 0.5) {
@@ -257,10 +282,27 @@ export function bestArithmeticChain(
         ...forward.out,
       ]
       const hits = 2 + forward.hits + backward.hits
-      if (hits > best.hits) {
+      // An invented line is not free. Counting hits alone cannot tell the true
+      // pitch from half of it: a half-pitch chain snaps to a real rule every
+      // other step, so it never meets two consecutive misses, never stops, and
+      // ends with exactly the hits of the correct chain and twice the lines. Ties
+      // then fall to whichever seed came first, which is the *smallest* gap
+      // between two candidates — systematically the wrong one. That is how one
+      // test photo's columns came out as 28 boundaries at a pitch of 34.6 where
+      // the grid's own is 69, with 13 of the 28 invented, and the import with
+      // them. Charging for interpolation separates the two: 15 against 10.5 here,
+      // while staying far too small to make a chain prefer stopping short of a
+      // rule it genuinely could not see.
+      const score = hits - INTERPOLATION_COST * (lines.length - hits)
+      if (score > best.score) {
         // Report the mean spacing actually realised, not the seed.
         const span = lines[lines.length - 1]! - lines[0]!
-        best = { lines, hits, pitch: lines.length > 1 ? span / (lines.length - 1) : seedPitch }
+        best = {
+          lines,
+          hits,
+          score,
+          pitch: lines.length > 1 ? span / (lines.length - 1) : seedPitch,
+        }
       }
     }
   }
