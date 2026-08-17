@@ -129,7 +129,17 @@ export interface Progress {
 /** Per-puzzle heavy assets, stored separately to keep library loads light. */
 export interface PuzzleAssets {
   puzzleId: string
-  /** "r,c" → data URL crop of that cell from the original photo. */
+  /**
+   * Clue id → data URL crop of the square that definition came from.
+   *
+   * Keyed by clue id rather than by "r,c" on purpose. Trimming a stray row or
+   * column off the top or left of the grid shifts every cell's coordinates,
+   * which silently pointed each definition at a *neighbour's* crop — so the
+   * review screen showed the wrong original beside the text, defeating the whole
+   * point of showing it. A clue id travels with its cell through any edit.
+   *
+   * Both definitions of a stacked square share the same crop.
+   */
   crops: Record<string, string>
   /** The straightened grid photo, kept as a reference while reviewing. */
   straightened?: Blob

@@ -30,7 +30,6 @@ import {
   type Clue,
   type Puzzle,
   type PuzzleAssets,
-  cellKey,
 } from '../types'
 import { makeId } from './puzzle'
 
@@ -298,7 +297,8 @@ export async function readDefinitions(
     const target = cells[index]
     if (target?.kind !== 'clue' || !target.clues) continue
 
-    // Whole-cell crop for the review screen.
+    // Whole-cell crop for the review screen, filed under every definition the
+    // square carries so the pairing survives later structural edits.
     const whole = cropRgba(
       cropSource,
       detected.x0 * cropScale,
@@ -306,7 +306,8 @@ export async function readDefinitions(
       detected.x1 * cropScale,
       detected.y1 * cropScale,
     )
-    crops[cellKey(detected.r, detected.c)] = await toDataUrl(whole, 360)
+    const wholeUrl = await toDataUrl(whole, 360)
+    for (const clue of target.clues) crops[clue.id] = wholeUrl
 
     const regions = clueRegions(detected, target.clues.length)
     const clues: Clue[] = []

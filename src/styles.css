@@ -828,6 +828,12 @@ textarea:focus {
   text-align: center;
 }
 
+/* Why a row wants attention, stated rather than merely highlighted. */
+.concern {
+  font-size: 12px;
+  color: var(--warn);
+}
+
 /* The split escape hatch: present on every definition row, quiet until needed. */
 .split-toggle {
   align-self: flex-start;

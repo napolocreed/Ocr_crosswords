@@ -64,12 +64,28 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
   )
 
   const clues = useMemo(() => allClues(puzzle), [puzzle])
+
+  /**
+   * Why a definition wants attention. An answer of one letter or none is the
+   * strongest signal available that a square was mistaken for a definition when
+   * it is not one: a real arrowword answer is at least two letters, so this
+   * catches structural errors that the OCR confidence cannot see.
+   */
+  const concernOf = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const { clue } of clues) {
+      const word = index.byId.get(clue.id)
+      if (!word || word.cells.length === 0) map.set(clue.id, 'ne mène nulle part')
+      else if (word.cells.length === 1) map.set(clue.id, 'réponse d’une seule lettre')
+      else if (!clue.text) map.set(clue.id, 'non lue')
+      else if ((clue.confidence ?? 0) < REVIEW_THRESHOLD) map.set(clue.id, 'lecture peu sûre')
+    }
+    return map
+  }, [clues, index])
+
   const flagged = useMemo(
-    () =>
-      clues.filter(
-        ({ clue }) => !clue.reviewed && (!clue.text || (clue.confidence ?? 0) < REVIEW_THRESHOLD),
-      ),
-    [clues],
+    () => clues.filter(({ clue }) => !clue.reviewed && concernOf.has(clue.id)),
+    [clues, concernOf],
   )
   const visibleClues = onlyFlagged && flagged.length > 0 ? flagged : clues
 
@@ -175,11 +191,12 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
       )}
 
       {visibleClues.map(({ r, c, clue }) => {
-        const crop = assets?.crops[cellKey(r, c)]
-        const isFlagged = !clue.text || (clue.confidence ?? 0) < REVIEW_THRESHOLD
+        // Older imports filed crops by coordinate; fall back so they still show.
+        const crop = assets?.crops[clue.id] ?? assets?.crops[cellKey(r, c)]
+        const concern = concernOf.get(clue.id)
         const word = index.byId.get(clue.id)
         return (
-          <div key={clue.id} className={`review-row ${isFlagged && !clue.reviewed ? 'flagged' : ''}`}>
+          <div key={clue.id} className={`review-row ${concern && !clue.reviewed ? 'flagged' : ''}`}>
             {crop ? (
               <img
                 className="crop"
@@ -193,9 +210,12 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
             <div className="fields">
               <span className="position">
                 L{r + 1} · C{c + 1}
-                {word ? ` · ${word.cells.length} lettres` : ' · ne mène nulle part'}
+                {word
+                  ? ` · ${word.cells.length} lettre${word.cells.length > 1 ? 's' : ''}`
+                  : ' · ne mène nulle part'}
                 {clue.reviewed ? ' · vérifiée' : ''}
               </span>
+              {concern && !clue.reviewed && <span className="concern">⚠ {concern}</span>}
               {(() => {
                 const cell = cellAt(puzzle, r, c)
                 const count = cell?.clues?.length ?? 1
