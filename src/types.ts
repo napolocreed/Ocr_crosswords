@@ -5,12 +5,16 @@ export type Direction = 'across' | 'down'
  * How a clue's arrow leaves its cell. Arrowwords ("mots fléchés") use four
  * shapes in practice — two straight and two bent:
  *
- *   right       → answer runs ACROSS, starting in the cell to the right
- *   down        ↓ answer runs DOWN,   starting in the cell below
- *   rightDown   ↱ bent: leaves to the right, then turns down;
- *                 answer runs DOWN, starting in the cell to the right
- *   downRight   ↳ bent: leaves downward, then turns right;
- *                 answer runs ACROSS, starting in the cell below
+ *   right       →  answer runs ACROSS, starting in the cell to the right
+ *   down        ↓  answer runs DOWN,   starting in the cell below
+ *   rightDown   ↴  bent: leaves to the right, then turns down;
+ *                  answer runs DOWN, starting in the cell to the right
+ *   downRight   ↳  bent: leaves downward, then turns right;
+ *                  answer runs ACROSS, starting in the cell below
+ *
+ * Only these two bends exist, because an answer only ever reads left-to-right or
+ * top-to-bottom: a bend that turned upwards or leftwards would point at an
+ * answer nothing could read.
  */
 export type ArrowKind = 'right' | 'down' | 'rightDown' | 'downRight'
 
@@ -33,10 +37,21 @@ export function arrowStartOffset(arrow: ArrowKind): { dr: number; dc: number } {
   }
 }
 
+/**
+ * Glyphs matching what the magazines actually print: a stroke leaving the square,
+ * turning a right angle where the arrow is bent, ending in a head.
+ *
+ * `rightDown` was wrong until a reader pointed it out. It showed `↱`, which is
+ * Unicode's *upwards* arrow with tip rightwards — up-then-right, a direction that
+ * cannot occur in an arrowword at all. The correct character is `↴`, rightwards
+ * arrow with corner downwards. The straight pair are line arrows rather than
+ * solid triangles for the same reason: the printed arrows have a shaft, and the
+ * four then read as one family.
+ */
 export const ARROW_GLYPH: Record<ArrowKind, string> = {
-  right: '▶',
-  down: '▼',
-  rightDown: '↱',
+  right: '→',
+  down: '↓',
+  rightDown: '↴',
   downRight: '↳',
 }
 

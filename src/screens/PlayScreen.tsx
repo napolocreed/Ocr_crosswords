@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { ARROW_LABEL, type Progress, type Puzzle } from '../types'
+import { ARROW_GLYPH, ARROW_LABEL, type Progress, type Puzzle } from '../types'
 import { GridView } from '../components/GridView'
 import { Keyboard } from '../components/Keyboard'
 import { MysteryBar } from '../components/MysteryBar'
@@ -79,8 +79,14 @@ export function PlayScreen({ puzzle, progress, onBack, onReview }: Props) {
       <div className="cluebar">
         {word ? (
           <>
-            <span className="arrow-chip" title={ARROW_LABEL[word.arrow]}>
-              {word.direction === 'across' ? '→' : '↓'}
+            {/* The printed arrow itself, bend included, rather than just the
+                reading direction: it is how you find where the answer starts. */}
+            <span
+              className="arrow-chip"
+              title={ARROW_LABEL[word.arrow]}
+              aria-label={ARROW_LABEL[word.arrow]}
+            >
+              {ARROW_GLYPH[word.arrow]}
             </span>
             <span className={`text ${word.clueText ? '' : 'placeholder'}`}>
               {word.clueText || 'Définition non lue — corrige-la dans la relecture'}
