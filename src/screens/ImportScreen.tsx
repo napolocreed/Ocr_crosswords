@@ -41,6 +41,8 @@ export function ImportScreen({ onDone, onCancel }: Props) {
   const [step, setStep] = useState<Step>('pick')
   const [photo, setPhoto] = useState<RgbaImage | null>(null)
   const [quad, setQuad] = useState<Quad | null>(null)
+  /** The suggestion, kept so a crop dragged into a mess can be put back. */
+  const suggested = useRef<Quad | null>(null)
   const [turns, setTurns] = useState(0)
   const [analysis, setAnalysis] = useState<StructureAnalysis | null>(null)
   const [analysing, setAnalysing] = useState(false)
@@ -77,7 +79,9 @@ export function ImportScreen({ onDone, onCancel }: Props) {
       const decoded = await decodeImageFileScaled(file, MAX_PHOTO_DIM)
       setPhoto(decoded)
       setTurns(0)
-      setQuad(suggestQuad(decoded))
+      const guess = suggestQuad(decoded)
+      suggested.current = guess
+      setQuad(guess)
       setTitle(defaultTitle())
       setStep('crop')
     } catch {
@@ -117,7 +121,9 @@ export function ImportScreen({ onDone, onCancel }: Props) {
     setTurns(next)
     // The crop is expressed in the rotated frame, so it has to rotate with it.
     const rotated = rotateRgba(photo, next)
-    setQuad(suggestQuad(rotated))
+    const guess = suggestQuad(rotated)
+    suggested.current = guess
+    setQuad(guess)
   }
 
   const startOcr = async () => {
@@ -312,12 +318,15 @@ export function ImportScreen({ onDone, onCancel }: Props) {
         </button>
         <h1>
           Cadre la grille
+          {/* The crop does not have to be exact, and the only way to know it is
+              close enough is to be told what was found. */}
           <span className="subtitle">
             {analysing
               ? 'analyse…'
               : detection && detection.rows > 1
-                ? `${detection.cols} × ${detection.rows} · ${clueCount} définitions`
-                : 'grille non reconnue'}
+                ? `${detection.cols} × ${detection.rows} · ${clueCount} définitions` +
+                  (clueCount >= 12 ? ' · cadrage bon' : ' · resserre un peu')
+                : 'grille non reconnue — cadre au plus près'}
           </span>
         </h1>
         <button type="button" className="icon-btn" onClick={rotate} aria-label="Pivoter">
@@ -326,6 +335,31 @@ export function ImportScreen({ onDone, onCancel }: Props) {
       </div>
 
       {oriented && quad && <CropStage image={oriented} quad={quad} onChange={setQuad} />}
+
+      <div className="crop-actions">
+        <button
+          type="button"
+          className="btn"
+          onClick={() => suggested.current && setQuad(suggested.current)}
+        >
+          Cadrage proposé
+        </button>
+        <button
+          type="button"
+          className="btn"
+          onClick={() =>
+            oriented &&
+            setQuad([
+              { x: 0, y: 0 },
+              { x: oriented.width, y: 0 },
+              { x: oriented.width, y: oriented.height },
+              { x: 0, y: oriented.height },
+            ])
+          }
+        >
+          Toute la photo
+        </button>
+      </div>
 
       {analysis?.looksSideways && !analysing && (
         <div

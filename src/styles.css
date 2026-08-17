@@ -358,6 +358,8 @@ textarea:focus {
   display: grid;
   place-items: center;
   touch-action: none;
+  /* Keeps the photo clear of the display's own edges, including any cutout. */
+  padding: max(0px, env(safe-area-inset-left)) max(0px, env(safe-area-inset-right));
 }
 
 .stage canvas {
@@ -366,9 +368,43 @@ textarea:focus {
   max-height: 100%;
 }
 
+/*
+ * The photo is inset from the stage, never flush with it. A corner handle sitting
+ * on the screen's own edge cannot be dragged inward on Android: the swipe is the
+ * system's back gesture and never reaches the page.
+ */
+.crop-frame {
+  position: relative;
+}
+
 .crop-layer {
   position: absolute;
   inset: 0;
+}
+
+/* Two escapes from a crop gone wrong, kept out of the stage so they are never
+   under a dragging finger. */
+.crop-actions {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px 0;
+}
+
+.crop-actions .btn {
+  flex: 1;
+  font-size: 14px;
+  padding: 9px 8px;
+}
+
+/* Magnifier shown while a corner is being placed, since a fingertip covers about
+   the area that has to be seen to place it. */
+.crop-loupe {
+  position: absolute;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+  background: #0a0c11;
 }
 
 .toolbar {
