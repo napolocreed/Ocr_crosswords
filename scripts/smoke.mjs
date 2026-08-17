@@ -174,13 +174,21 @@ await check('definitions pass lists clues with crops', async () => {
 
 await check('arrow assignment keeps every definition it is given', async () => {
   // Guards the padding rule: a square with two stacked definitions must yield
-  // two clue rows, never one. The floor is a measured baseline, not a target —
-  // it dropped from 74 to 45 when classification started rejecting squares that
-  // are not part of the printed grid, which removed dozens of junk readings
-  // rather than losing real ones.
-  const rows = await page.locator('.review-row').count()
-  console.log(`       ${rows} definition rows`)
-  if (rows < 45) throw new Error(`only ${rows} definition rows — a regression`)
+  // two clue rows, never one.
+  //
+  // Count the definitions the puzzle holds, not the rows on screen. The screen
+  // opens on the ones needing attention, so reading it counts *failures* — and
+  // asserting a floor on that punishes every improvement to the OCR. This test
+  // did exactly that: the flagged count fell from 45 to 38 because more
+  // definitions were being read confidently, and it reported the gain as a
+  // regression.
+  const label = await page.locator('.seg button', { hasText: 'Toutes' }).first().innerText()
+  const total = Number(label.match(/\((\d+)\)/)?.[1] ?? 0)
+  const flagged = await page.locator('.review-row').count()
+  console.log(`       ${total} definitions, ${flagged} flagged for review`)
+  // The page carries 71. Below 60 something structural has broken; the gap
+  // between the two is the browser's own image decoding, which dilutes hairlines.
+  if (total < 60) throw new Error(`only ${total} definitions — a regression`)
 })
 
 await check('bent arrows are read from the page', async () => {

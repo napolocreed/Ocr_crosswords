@@ -143,6 +143,28 @@ node --experimental-strip-types --import ./scripts/register-ts.mjs \
   scripts/score.mjs fixtures/ma-photo.jpg --detail
 ```
 
+Un tour d'OCR complet prend quelques minutes, ce qui est trop lent pour itérer sur
+la géométrie. Trois outils rendent la boucle courte — et surtout **visuelle**, car
+la plupart des erreurs restantes se voient en une seconde sur une image et se
+devinent mal dans des chiffres :
+
+```bash
+# score structurel sans OCR, en quelques secondes : accord de cadre, comptages
+node --experimental-strip-types --import ./scripts/register-ts.mjs \
+  scripts/dev-geom.mjs fixtures/*.jpg
+
+# les cases détectées dessinées sur la photo redressée (+ quatre quartiers zoomés)
+node --experimental-strip-types --import ./scripts/register-ts.mjs \
+  scripts/dev-overlay.mjs fixtures/ma-photo.jpg
+
+# les crops exacts envoyés à Tesseract, pour une case nommée
+node --experimental-strip-types --import ./scripts/register-ts.mjs \
+  scripts/dev-cell.mjs fixtures/ma-photo.jpg 0,0 4,8
+```
+
+`dev-geom.mjs` sert de garde-fou : une modification de géométrie qui améliore
+l'alignement mais perd des cases-définitions n'est pas une amélioration.
+
 ## Architecture
 
 ```
@@ -171,20 +193,27 @@ seule métrique qui compte : combien de définitions sont lues au caractère pr�
 
 Sur une page à plat, bien éclairée, sans recadrage manuel :
 
-| | Avant | **Après** | Vérité |
-| --- | --- | --- | --- |
-| Grille | 14 × 19 | **13 × 17** | 13 × 17 |
-| Cases-définitions | 68 | **41** | 41 |
-| Cases-lettres | 198 | **180** | 180 |
-| Définitions produites | 116 | **69** | 71 |
-| **Exactes** | 31 (43,7 %) | **55 (77,5 %)** | |
-| Presque (≤ 2 corrections) | 6 | **11** | |
-| **Utilisables** | 37 (52,1 %) | **66 (93,0 %)** | |
-| **Parasites** | **56** | **3** | |
-| Cases orphelines | 7 | **2** | 0 |
+| | Au départ | Structure corrigée | **Géométrie corrigée** | Vérité |
+| --- | --- | --- | --- | --- |
+| Grille | 14 × 19 | 13 × 17 | **13 × 17** | 13 × 17 |
+| Cases-définitions | 68 | 41 | **41** | 41 |
+| Cases-lettres | 198 | 180 | **180** | 180 |
+| Filets internes | — | 28 | **30** | 30 |
+| Définitions produites | 116 | 69 | **71** | 71 |
+| **Exactes** | 31 (43,7 %) | 55 (77,5 %) | **67 (94,4 %)** | |
+| Presque (≤ 2 corrections) | 6 | 11 | **4** | |
+| **Utilisables** | 37 (52,1 %) | 66 (93,0 %) | **71 (100 %)** | |
+| **Manquantes** | 28 | 5 | **0** | |
+| **Parasites** | 56 | 3 | **0** | |
+| Cases orphelines | 7 | 2 | **0** | 0 |
 
-La structure est désormais **exacte** : le nombre de colonnes, de rangées, de
-cases-définitions et de cases-lettres correspond au papier.
+La structure est **exacte** : colonnes, rangées, cases-définitions, cases-lettres
+et filets internes correspondent tous au papier. Aucune définition n'est perdue,
+aucune n'est inventée, et les quatre restantes se corrigent d'une ou deux touches.
+
+Les frontières tombent sur les filets imprimés à **0,998** d'accord de cadre en
+moyenne, contre 0,936 auparavant, et plus aucune case n'est sous 0,75. Sur la
+seconde photo, plus difficile, le même chiffre passe de 0,829 à 0,991.
 
 ### Attention aux métriques indirectes
 
@@ -218,6 +247,47 @@ texte du verso traversant le papier. C'était faux. Un critère de noirceur abso
 référencé à un percentile global s'est révélé *pire* que le seuillage local qu'il
 remplaçait. La vraie cause était géométrique.
 
+### Puis : le découpage était juste, il était mal placé
+
+Une fois la structure exacte, les erreurs restantes ne venaient plus de l'OCR mais
+de **quelques pixels de géométrie**. Trois corrections, dans l'ordre où elles ont
+été trouvées :
+
+4. **Le cadre de découpe se règle sur le texte, il ne se devine pas.** Rogner une
+   fraction fixe de chaque bord doit couvrir le pire cas, donc coupe dans le cas
+   courant : à 7 % d'une case, 29 des 41 cases avaient un glyphe tranché en deux.
+   Le dégât est invisible dans le résultat mais fatal — un demi-U se lit L
+   (`METS EN JEU` → `METS EN JEL`), un O privé de son arc gauche se lit D
+   (`OBSCURITÉS` → `DBSCURITÉS`), et une première lettre assez rabotée disparaît
+   (`DYNAMIQUES` → `YNAMIQUES`). Chaque bord part maintenant d'un retrait sûr et ne
+   s'écarte que tant qu'il coupe encore de l'encre, jusqu'à la gouttière que la page
+   imprime entre le texte et le filet. **55 → 61 exactes.**
+5. **Une frontière perdue se retrouve grâce à ses voisines.** Chaque frontière est
+   suivie séparément, ce qui ne lui laisse qu'un seul indice par bande — son propre
+   filet ; là où il est pâle, le suivi s'accroche à une ligne de texte et la dérive
+   propage l'erreur. Or une grille imprimée est régulière : dans une bande, ses
+   filets décrivent un arc peu profond contre leur indice. Une frontière en
+   désaccord avec un ajustement robuste de sa bande n'est pas en train de suivre la
+   page, elle est perdue — et ses voisines disent où elle devrait être.
+   L'ajustement doit être *courbe* : la page bombe, et l'arc à lui seul consomme
+   une tolérance droite de 0,3 pas.
+6. **Les filets se lisent en niveaux de gris, pas dans le binaire.** Le binaire est
+   ce qui rend la grille trouvable sous le gradient d'ombre d'une photo à main
+   levée, mais le seuillage épaissit et déplace un filet d'un pixel. La frontière
+   haute de cette page s'était posée 22 px sous son filet — un cinquième de case —
+   c'est-à-dire *à l'intérieur* de la première ligne de
+   `ACCROIS-SEMENT DE LA VITESSE`, si bien que la découpe commençait à l'interligne
+   en dessous. En gris, le filet ne trompe pas : il encre 90 pixels sur 90 de la
+   bande, là où la ligne de capitales la plus sombre en encre 40. **61 → 67
+   exactes, et plus aucune définition perdue.**
+
+Une approche **essayée et écartée** : ajuster l'échelle entière par bande au lieu
+de suivre chaque frontière. C'est séduisant — vingt indices par bande au lieu d'un
+— mais les bandes extérieures sont surtout de la marge (la bande 0 finit à x=117,
+la grille commence à x=85), et livrées à elles-mêmes elles se calent sur le bord de
+page et la reliure. La seconde photo y perdait tout son accord de cadre (0,83 →
+0,77) et trois cases-définitions.
+
 ## Limites connues
 
 - **L'orientation ne se détecte de façon fiable que sur une page à plat.** Mesuré dans les
@@ -226,14 +296,16 @@ remplaçait. La vraie cause était géométrique.
   L'app ne prévient donc que lorsqu'elle est sûre : le silence est la réponse honnête quand
   il n'y a pas de signal. Le contrôle de vraisemblance après l'OCR rattrape le cas d'une
   page mal orientée, demi-tour compris.
-- **Le gain n'est vérifié que sur une page à plat.** Sur la photo bombée, les définitions
-  produites passent de 97 à 65 — 97 était manifestement trop, 65 est plausible, mais faute de
-  transcription de cette page je ne peux pas l'affirmer. Photographier la page **bien à plat
-  change beaucoup** le résultat.
-- La détection trouve souvent **une rangée ou une colonne en trop** (bord de page, en-tête).
-  Un recadrage serré l'évite, et la passe « Structure » de la relecture permet de rogner.
-- Les **flèches coudées** ne sont pas reconnues automatiquement : elles sont proposées comme
-  variante et se choisissent dans la relecture.
+- **Le 100 % n'est vérifié que sur une page à plat**, celle qui est transcrite. Sur la
+  seconde photo, bombée, seuls les indicateurs structurels sont mesurables : l'accord de
+  cadre y passe de 0,829 à 0,991 et plus aucune case n'est mal cadrée, ce qui va dans le
+  bon sens — mais sans transcription de cette page je ne peux pas en donner l'exactitude.
+  Photographier la page **bien à plat change beaucoup** le résultat.
+- Les rangées et colonnes hors grille (bord de page, en-tête, reliure) sont **pelées
+  automatiquement** : une bordure qui n'est pas imprimée n'est pas de la grille, et l'écart
+  est net — les bords fantômes s'accordent à 0,29, 0,02 et 0,01 avec des filets imprimés, là
+  où la plus faible rangée réelle des deux grilles est à 0,78. La passe « Structure » de la
+  relecture reste là pour rogner un cas limite.
 - L'OCR d'un texte imprimé à 6 pt reste imparfait. La relecture n'est pas un rattrapage
   d'échec, c'est une étape assumée du flux.
 - Les **cases numérotées du mot mystère se désignent à la main** (passe 3 de la relecture :

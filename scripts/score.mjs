@@ -32,7 +32,7 @@ import {
 } from '../src/lib/image.ts'
 import { detectGrid, refineSplits, trimUnusedEdges } from '../src/lib/gridDetect.ts'
 import { detectArrows } from '../src/lib/arrowDetect.ts'
-import { suggestQuad } from '../src/lib/importPipeline.ts'
+import { clueRegions, suggestQuad } from '../src/lib/importPipeline.ts'
 import { OcrEngine } from '../src/lib/ocr.ts'
 import { encodePng } from './png.mjs'
 
@@ -134,28 +134,15 @@ const engine = new OcrEngine({
 })
 await engine.init()
 
+// Crop geometry comes from the app's own clueRegions, so what is scored here is
+// what the app reads. An earlier version of this harness computed its own and
+// spent a while reporting numbers for a pipeline that did not exist.
+const bigGray = toGray(big.img)
 const produced = []
 for (const cell of clueCells) {
-  const padX = (cell.x1 - cell.x0) * 0.07
-  const padY = (cell.y1 - cell.y0) * 0.07
-  const regions =
-    cell.split === undefined
-      ? [[cell.y0 + padY, cell.y1 - padY]]
-      : (() => {
-          const sy = cell.y0 + cell.split * (cell.y1 - cell.y0)
-          return [
-            [cell.y0 + padY, sy - padY * 0.5],
-            [sy + padY * 0.5, cell.y1 - padY],
-          ]
-        })()
-  for (const [y0, y1] of regions) {
-    const crop = cropRgba(
-      big.img,
-      (cell.x0 + padX) * ratio,
-      y0 * ratio,
-      (cell.x1 - padX) * ratio,
-      y1 * ratio,
-    )
+  const regions = clueRegions(bigGray, cell, cell.split === undefined ? 1 : 2, ratio)
+  for (const region of regions) {
+    const crop = cropRgba(big.img, region.x0, region.y0, region.x1, region.y1)
     const prepared = preprocessForOcr(crop)
     const { text } = await engine.recognize(
       encodePng(prepared.width, prepared.height, prepared.data),

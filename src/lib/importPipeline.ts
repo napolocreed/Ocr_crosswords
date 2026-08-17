@@ -6,12 +6,15 @@ import {
   rotateRgba,
   toGray,
   warpPerspectiveRgba,
+  type GrayImage,
   type Quad,
   type RgbaImage,
 } from './image'
 import {
   detectGrid,
   refineSplits,
+  fitTextBox,
+  textBoxBounds,
   textOrientationScore,
   trimUnusedEdges,
   type DetectedCell,
@@ -295,17 +298,42 @@ export function buildPuzzleFromDetection(
   }
 }
 
-/** The regions of one clue cell that hold a single definition each. */
-function clueRegions(cell: DetectedCell, clueCount: number) {
-  const padX = (cell.x1 - cell.x0) * 0.07
-  const padY = (cell.y1 - cell.y0) * 0.07
-  if (clueCount < 2 || cell.split === undefined) {
-    return [{ x0: cell.x0 + padX, y0: cell.y0 + padY, x1: cell.x1 - padX, y1: cell.y1 - padY }]
-  }
-  const splitY = cell.y0 + cell.split * (cell.y1 - cell.y0)
+/**
+ * The regions of one clue cell that hold a single definition each, in the
+ * coordinates of the image they will be cut from.
+ *
+ * Exported because the calibration harness has to measure the very crops the app
+ * reads. It once computed its own, and spent a while reporting numbers for a
+ * pipeline that did not exist.
+ *
+ * @param gray greyscale of the image the crops come from
+ * @param scale multiply detection coordinates by this to reach `gray`
+ */
+export function clueRegions(gray: GrayImage, cell: DetectedCell, clueCount: number, scale: number) {
+  const { start, limit } = textBoxBounds({
+    x0: cell.x0 * scale,
+    y0: cell.y0 * scale,
+    x1: cell.x1 * scale,
+    y1: cell.y1 * scale,
+  })
+  if (clueCount < 2 || cell.split === undefined) return [fitTextBox(gray, start, limit)]
+
+  // The hairline is the finest thing on the page but it is still ink, so each half
+  // starts clear of it and may not grow back across it: a bar of hairline left in
+  // a crop reads as a character.
+  const splitY = (cell.y0 + cell.split * (cell.y1 - cell.y0)) * scale
+  const gap = Math.max(2, (cell.y1 - cell.y0) * scale * 0.03)
   return [
-    { x0: cell.x0 + padX, y0: cell.y0 + padY, x1: cell.x1 - padX, y1: splitY - padY * 0.5 },
-    { x0: cell.x0 + padX, y0: splitY + padY * 0.5, x1: cell.x1 - padX, y1: cell.y1 - padY },
+    fitTextBox(
+      gray,
+      { ...start, y1: splitY - gap },
+      { ...limit, y1: splitY - gap },
+    ),
+    fitTextBox(
+      gray,
+      { ...start, y0: splitY + gap },
+      { ...limit, y0: splitY + gap },
+    ),
   ]
 }
 
@@ -329,6 +357,7 @@ export async function readDefinitions(
   onProgress?: (progress: OcrProgress) => void,
 ): Promise<{ puzzle: Puzzle; assets: PuzzleAssets; quality: ReadQuality }> {
   const { detection, cropSource, cropScale } = analysis
+  const cropGray = toGray(cropSource)
   const crops: Record<string, string> = {}
   const cells = puzzle.cells.slice()
 
@@ -355,18 +384,12 @@ export async function readDefinitions(
     const wholeUrl = await toDataUrl(whole, 360)
     for (const clue of target.clues) crops[clue.id] = wholeUrl
 
-    const regions = clueRegions(detected, target.clues.length)
+    const regions = clueRegions(cropGray, detected, target.clues.length, cropScale)
     const clues: Clue[] = []
     for (let i = 0; i < target.clues.length; i++) {
       const existing = target.clues[i]!
       const region = regions[Math.min(i, regions.length - 1)]!
-      const crop = cropRgba(
-        cropSource,
-        region.x0 * cropScale,
-        region.y0 * cropScale,
-        region.x1 * cropScale,
-        region.y1 * cropScale,
-      )
+      const crop = cropRgba(cropSource, region.x0, region.y0, region.x1, region.y1)
       const prepared = preprocessForOcr(crop)
       const blob = await toBlob(prepared, 0.95)
       let text = ''

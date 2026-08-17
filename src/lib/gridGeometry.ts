@@ -359,7 +359,174 @@ export function detectBoundaries(
     })
   })
 
+  repairLadders(curves, peaksPerBand, chain.pitch)
   return { curves, pitch: chain.pitch, hits: chain.hits, tilt }
+}
+
+/**
+ * Residual, in pitches, past which a boundary is not part of its band's ladder.
+ *
+ * Judged against a curve, not a line, which is what lets it be this tight. A
+ * photographed page bows, so within a band the rule positions trace a shallow arc
+ * against their index: measured here it departs from its own chord by 10 to 20px
+ * at a pitch of 70. Tested against a straight line, that curvature alone eats a
+ * 0.3 tolerance and hides every real outlier inside it.
+ */
+const LADDER_OUTLIER = 0.17
+
+/** How far a repaired boundary may then move to land on a rule, in pitches. */
+const REPAIR_SNAP = 0.12
+
+/**
+ * Puts back boundaries that have left their band's ladder, in place.
+ *
+ * Each boundary is tracked on its own, which is right for following a bow but
+ * gives every line exactly one piece of evidence per band — its own rule. Where
+ * that rule is faint the tracker takes the nearest thing it can see instead,
+ * usually a line of definition text, and the drift term then carries the error
+ * onward. On fleches-niveau2-p43 the grid's top boundary ended up 44px below the
+ * printed rule at the left of the page, slicing the first row of definitions in
+ * half: `ACCROISSEMENT DE LA VITESSE` was read as `LA VITESSE`, and
+ * `CERCLE LUMINEUX` was cut away from `PETITE CONSTRUCTION` above its own square.
+ *
+ * A printed grid, though, is regular: within one band its rules lie on a shallow
+ * arc against their index — straight but for the page's own bow. So a boundary
+ * that disagrees with a robust fit through its own band is not following the
+ * page, it is lost — and its neighbours, which are not, say where it should be.
+ * Rebuilding the position of that boundary alone leaves everything the tracker
+ * got right untouched.
+ *
+ * Fitting the whole ladder per band instead of tracking at all was tried, and is
+ * worse: the outer bands are mostly margin — band 0 ends at x=117 where the grid
+ * starts at x=85 — so, fitted freely, they lock onto the page edge and the
+ * binding, and the second test photo lost frame agreement across the board
+ * (0.83 → 0.77) along with three definition squares.
+ */
+function repairLadders(
+  curves: number[][],
+  peaksPerBand: { pos: number; strength: number }[][],
+  pitch: number,
+): void {
+  const count = curves.length
+  if (count < 5) return
+  const bands = curves[0]!.length
+
+  for (let b = 0; b < bands; b++) {
+    const positions = curves.map((curve) => curve[b]!)
+    const predicted = robustArc(positions)
+    const sound = positions.map((p, i) => Math.abs(p - predicted[i]!) <= pitch * LADDER_OUTLIER)
+    if (sound.every(Boolean)) continue
+
+    for (let i = 0; i < count; i++) {
+      if (sound[i]) continue
+      // Predict from the nearest boundaries that are still on the ladder. A
+      // local line beats the band-wide one because the printed spacing tightens
+      // gently across a page: extrapolating the grid's top rule from its four
+      // nearest sound neighbours lands within 2px of the print, where the
+      // band-wide fit is 17px out.
+      const near: number[] = []
+      for (let d = 1; d < count && near.length < 4; d++) {
+        if (i - d >= 0 && sound[i - d]) near.push(i - d)
+        if (near.length < 4 && i + d < count && sound[i + d]) near.push(i + d)
+      }
+      if (near.length < 2) continue
+      const meanI = near.reduce((a, v) => a + v, 0) / near.length
+      const meanP = near.reduce((a, v) => a + positions[v]!, 0) / near.length
+      let num = 0
+      let den = 0
+      for (const v of near) {
+        num += (v - meanI) * (positions[v]! - meanP)
+        den += (v - meanI) ** 2
+      }
+      let placed = den > 0 ? meanP + (num / den) * (i - meanI) : predicted[i]!
+
+      // Then let it land on a rule, if one is visible right there.
+      let bestDist = pitch * REPAIR_SNAP
+      for (const peak of peaksPerBand[b]!) {
+        const d = Math.abs(peak.pos - placed)
+        if (d < bestDist) {
+          bestDist = d
+          placed = peak.pos
+        }
+      }
+      curves[i]![b] = placed
+    }
+  }
+}
+
+/**
+ * Where each boundary of a band would sit if the ladder were undisturbed: a
+ * quadratic in the boundary's index, fitted so that a few lost boundaries cannot
+ * bend it toward themselves.
+ *
+ * Quadratic rather than linear because the arc is real — a photographed page
+ * bows, and the spacing tightens toward the far edge — so a straight fit would
+ * charge the page's own shape to the boundaries and leave no room to see an
+ * actual mistake. Robustness comes from refitting on the closer half of the
+ * points: an outlier by definition sits in the further half, so it stops pulling
+ * after the first pass, while the arc is decided by boundaries that agree.
+ */
+function robustArc(positions: number[]): number[] {
+  const n = positions.length
+  const index = positions.map((_, i) => i)
+  let weights = positions.map(() => 1)
+
+  const fit = () => {
+    // Normal equations for a + b·i + c·i², accumulated directly: n is around
+    // twenty, so a 3×3 solve is cheaper than any general routine.
+    let s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0
+    let t0 = 0, t1 = 0, t2 = 0
+    for (let k = 0; k < n; k++) {
+      const w = weights[k]!
+      if (w === 0) continue
+      const i = index[k]!
+      const y = positions[k]!
+      const i2 = i * i
+      s0 += w
+      s1 += w * i
+      s2 += w * i2
+      s3 += w * i2 * i
+      s4 += w * i2 * i2
+      t0 += w * y
+      t1 += w * i * y
+      t2 += w * i2 * y
+    }
+    const m = [
+      [s0, s1, s2, t0],
+      [s1, s2, s3, t1],
+      [s2, s3, s4, t2],
+    ]
+    // Gaussian elimination with partial pivoting.
+    for (let col = 0; col < 3; col++) {
+      let pivot = col
+      for (let row = col + 1; row < 3; row++) {
+        if (Math.abs(m[row]![col]!) > Math.abs(m[pivot]![col]!)) pivot = row
+      }
+      if (Math.abs(m[pivot]![col]!) < 1e-9) return null
+      const swap = m[col]!
+      m[col] = m[pivot]!
+      m[pivot] = swap
+      for (let row = 0; row < 3; row++) {
+        if (row === col) continue
+        const factor = m[row]![col]! / m[col]![col]!
+        for (let k = col; k < 4; k++) m[row]![k]! -= factor * m[col]![k]!
+      }
+    }
+    const coefficients = [m[0]![3]! / m[0]![0]!, m[1]![3]! / m[1]![1]!, m[2]![3]! / m[2]![2]!]
+    return index.map((i) => coefficients[0]! + coefficients[1]! * i + coefficients[2]! * i * i)
+  }
+
+  let curve = fit()
+  if (!curve) return positions.slice()
+  for (let pass = 0; pass < 2; pass++) {
+    const residuals = positions.map((p, k) => Math.abs(p - curve![k]!))
+    const cut = residuals.slice().sort((a, b) => a - b)[Math.floor(n / 2)] ?? 0
+    weights = residuals.map((r) => (r <= cut ? 1 : 0))
+    const next = fit()
+    if (!next) break
+    curve = next
+  }
+  return curve
 }
 
 /** Samples a boundary curve at an arbitrary position along the sweep axis. */

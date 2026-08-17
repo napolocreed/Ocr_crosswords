@@ -165,6 +165,14 @@ export function detectGrid(
   const rows = ys.length - 1
   const cols = xs.length - 1
 
+  // The chain is found in the binarised image, which is what makes it findable at
+  // all under a hand-held photo's shadow gradient — but binarising costs
+  // precision, and a boundary a fifth of a cell off its rule is enough to cut a
+  // line of definition text away. The greyscale still holds the rule exactly, so
+  // each boundary is now placed on it.
+  snapToRules(gray, ys, xs, horizontal.pitch, 'rows')
+  snapToRules(gray, xs, ys, vertical.pitch, 'cols')
+
   const missingY = ys.length - horizontal.hits
   const missingX = xs.length - vertical.hits
   if (missingY > 0) warnings.push(`${missingY} ligne(s) horizontale(s) reconstituée(s)`)
@@ -245,6 +253,104 @@ export function detectGrid(
   }
 }
 
+/** How far a boundary may move to land on its rule, as a fraction of the pitch. */
+const SNAP_RADIUS = 0.28
+
+/**
+ * Fraction of a band a line of ink must cover to be a rule.
+ *
+ * Measured across cell 0,0 of fleches-niveau2-p43: the rule inks 90 pixels of 90,
+ * the darkest row of the definition text below it 40. There is no overlap to
+ * worry about.
+ */
+const SNAP_COVERAGE = 0.62
+
+/**
+ * Moves each boundary onto the rule the page actually prints, band by band.
+ *
+ * The boundary chain is found in the binarised image because that is what
+ * survives a hand-held photo's shadow gradient, but thresholding thickens and
+ * shifts a one-pixel rule, and the chain then inherits the error. It does not
+ * take much to matter: on fleches-niveau2-p43 the grid's top boundary settled 22
+ * pixels below its rule — a fifth of a cell — which put it inside the first line
+ * of `ACCROIS-SEMENT DE LA VITESSE`, so the crop began at the leading below that
+ * line and the definition was read as `SEMENT DE LA VITESSE`. Nothing downstream
+ * can recover a line the crop never contained.
+ *
+ * In greyscale the rule is unmistakable, so each boundary simply looks for it
+ * within a fraction of a cell and moves there. A rule is recognised by covering
+ * the band rather than by being dark: a line of capitals is dark too, but it
+ * inks under half of the band while a rule inks nearly all of it.
+ *
+ * @param curves boundaries to move, modified in place
+ * @param across the other axis's boundaries, which give the grid's own extent
+ */
+function snapToRules(
+  gray: GrayImage,
+  curves: number[][],
+  across: number[][],
+  pitch: number,
+  axis: 'rows' | 'cols',
+): void {
+  if (curves.length < 2 || across.length < 2) return
+  const sweepExtent = axis === 'rows' ? gray.width : gray.height
+  const bands = curves[0]!.length
+  const radius = Math.max(2, Math.round(pitch * SNAP_RADIUS))
+
+  // Stay inside the grid: past its last rule there is only page, and a shadow or
+  // a fold there would happily pass for a rule.
+  const first = across[0]!
+  const last = across[across.length - 1]!
+  const gridFrom = Math.min(...first)
+  const gridTo = Math.max(...last)
+
+  for (let b = 0; b < bands; b++) {
+    const bandFrom = Math.max(gridFrom, (b * sweepExtent) / bands)
+    const bandTo = Math.min(gridTo, ((b + 1) * sweepExtent) / bands)
+    if (bandTo - bandFrom < 8) continue
+    const from = Math.round(bandFrom)
+    const to = Math.round(bandTo)
+
+    /** Fraction of this band inked along one line. */
+    const coverage = (at: number, cut: number): number => {
+      const line = Math.round(at)
+      let dark = 0
+      for (let k = from; k < to; k++) {
+        const value =
+          axis === 'rows' ? gray.data[line * gray.width + k] : gray.data[k * gray.width + line]
+        if (value !== undefined && value <= cut) dark++
+      }
+      return dark / (to - from)
+    }
+
+    for (const curve of curves) {
+      const here = curve[b]!
+      const centreAcross = (from + to) / 2
+      const cut =
+        localPaperLevel(
+          gray,
+          axis === 'rows' ? centreAcross : here,
+          axis === 'rows' ? here : centreAcross,
+          pitch * 1.5,
+        ) * 0.6
+      const limit = axis === 'rows' ? gray.height : gray.width
+      let bestScore = SNAP_COVERAGE
+      let bestAt: number | null = null
+      for (let d = -radius; d <= radius; d++) {
+        const at = here + d
+        if (at < 0 || at >= limit) continue
+        const score = coverage(at, cut)
+        // Nearest wins a tie: the fitted position is the better prior.
+        if (score > bestScore || (score === bestScore && bestAt !== null && Math.abs(d) < Math.abs(bestAt - here))) {
+          bestScore = score
+          bestAt = at
+        }
+      }
+      if (bestAt !== null) curve[b] = bestAt
+    }
+  }
+}
+
 /**
  * Recomputes which definition squares hold two stacked definitions, reading the
  * hairline out of the greyscale image rather than the binarised one.
@@ -286,6 +392,185 @@ export function refineSplits(
   })
   return { ...detection, cells }
 }
+
+/**
+ * Fraction of a cell's extent a line of ink must cover to be a rule rather than
+ * type.
+ *
+ * Measured across a cell's central 70% — so the perpendicular rules and any
+ * hairline are excluded — a printed rule covers essentially all of it, while the
+ * darkest column through four stacked lines of capitals covers a little over
+ * half.
+ */
+const RULE_FILL = 0.68
+
+/**
+ * Fraction of the grid's median frame agreement below which a border row or
+ * column counts as unprinted, and so as margin rather than grid.
+ *
+ * Set midway across a wide gap: on the two test photos the phantom edges score
+ * 0.29, 0.02 and 0.01 against medians near 0.92, and the weakest real edge
+ * scores 0.78. Anything from about 0.4 to 0.8 of the median separates them.
+ */
+const UNPRINTED_EDGE = 0.7
+
+/** Where an edge starts before it is fitted, as a fraction of the cell. */
+const TEXT_INSET = 0.045
+
+/**
+ * How far past the nominal bound fitting may reach, as a fraction of the cell.
+ *
+ * Negative — i.e. outside the cell — because the bound is only ever approximately
+ * where the rule is, and being a few pixels short of the true square cuts type
+ * just as effectively as insetting too far did. Cell 0,2's box lands 12px below
+ * its printed rule, which was enough to shave the caps off `CERCLE` and have it
+ * read as `VENVLLE`. Reaching outward is safe here only because the fit stops at
+ * a rule, and before that at the first clear line: this is a backstop, not the
+ * usual stopping condition.
+ */
+const TEXT_LIMIT = -0.15
+
+/**
+ * Fits a crop box to the type inside a definition square, so that no glyph is cut
+ * and no rule is included.
+ *
+ * A fixed inset cannot do both. The grid is fitted as a straight arithmetic
+ * progression and the printed page bows, so a rule lands several pixels either
+ * side of where the progression puts it — and cell 2,9's left rule falls outside
+ * its nominal bound altogether. An inset generous enough to clear the worst case
+ * slices a glyph in half in the common one, which on this page it did on 29 of 41
+ * squares. The damage never shows in the output but is fatal to it: half a U
+ * reads as L (`METS EN JEU` → `METS EN JEL`), an O missing its left arc reads as
+ * D (`OBSCURITÉS` → `DBSCURITÉS`), and a shaved first letter simply disappears
+ * (`DYNAMIQUES` → `YNAMIQUES`).
+ *
+ * Locating the rules absolutely was tried first and is worse, not better: where a
+ * rule is faint or notched by an arrow it is missed and left in the crop, and
+ * Tesseract dutifully reads the fragment as a letter (`VOITURE SUR RAILS` →
+ * `I VOITURE SUR RAILS`, `PROBLÈME` → `PROBLÈME D D`). Spurious characters cost
+ * as much as missing ones.
+ *
+ * So each edge is instead *fitted*, monotonically: it starts at a safe inset and
+ * moves outward only while it is still cutting through ink, stopping at the first
+ * clear line — the gutter the page prints between type and rule — or at a line
+ * that is rule-like. The starting position is the old behaviour, so an edge that
+ * was already clear is left exactly where it was; only edges that were demonstrably
+ * cutting type move at all.
+ *
+ * Coordinates are in `gray`'s own space, and `limit` bounds how far out any edge
+ * may travel — for a stacked square that keeps each half on its own side of the
+ * hairline.
+ */
+export function fitTextBox(
+  gray: GrayImage,
+  region: { x0: number; y0: number; x1: number; y1: number },
+  limit: { x0: number; y0: number; x1: number; y1: number },
+): { x0: number; y0: number; x1: number; y1: number } {
+  const w = region.x1 - region.x0
+  const h = region.y1 - region.y0
+  if (w < 8 || h < 8) return region
+  // Same absolute criterion as classification: ink, not shadow.
+  const cut =
+    localPaperLevel(gray, (region.x0 + region.x1) / 2, (region.y0 + region.y1) / 2, Math.max(w, h) * 1.25) *
+    0.6
+
+  const ay = Math.max(0, Math.round(region.y0 + h * 0.08))
+  const by = Math.min(gray.height, Math.round(region.y1 - h * 0.08))
+  const ax = Math.max(0, Math.round(region.x0 + w * 0.08))
+  const bx = Math.min(gray.width, Math.round(region.x1 - w * 0.08))
+
+  /** Dark pixels down one column, within the region's own rows. */
+  const colInk = (x: number): number => {
+    const px = Math.round(x)
+    if (px < 0 || px >= gray.width || by <= ay) return 0
+    let dark = 0
+    for (let y = ay; y < by; y++) if (gray.data[y * gray.width + px]! <= cut) dark++
+    return dark
+  }
+  /** Dark pixels along one row, within the region's own columns. */
+  const rowInk = (y: number): number => {
+    const py = Math.round(y)
+    if (py < 0 || py >= gray.height || bx <= ax) return 0
+    const row = py * gray.width
+    let dark = 0
+    for (let x = ax; x < bx; x++) if (gray.data[row + x]! <= cut) dark++
+    return dark
+  }
+
+  // A stroke's edge leaves a handful of dark pixels; JPEG noise leaves one or two.
+  const colMin = Math.max(3, Math.round((by - ay) * 0.05))
+  const rowMin = Math.max(3, Math.round((bx - ax) * 0.04))
+
+  /**
+   * Places one edge between the rule and the type. `sign` is the direction of
+   * travel outward: -1 toward a low bound, +1 toward a high one.
+   */
+  const fit = (
+    ink: (v: number) => number,
+    span: number,
+    start: number,
+    stop: number,
+    sign: number,
+    min: number,
+  ): number => {
+    let v = start
+    // First, come off the rule if the edge has landed on one — which happens
+    // whenever the fitted bound overshoots its square. Left in, the rule reaches
+    // the crop as a black bar and Tesseract reads it as a character.
+    const clearance = Math.max(2, Math.round(span * 0.02))
+    for (let guard = 0; ink(v) / span >= RULE_FILL && guard < span; guard++) v -= sign
+    if (v !== start) return v - sign * clearance
+
+    if (ink(v) < min) return v // already clear: no type is being cut
+    // Otherwise the edge is cutting through type, so walk out to the gutter the
+    // page prints between the type and the rule.
+    for (;;) {
+      const next = v + sign
+      if (sign < 0 ? next < stop : next > stop) break
+      if (ink(next) / span >= RULE_FILL) break // reached the rule; keep the paper
+      v = next
+      if (ink(v) < min) break
+    }
+    return v
+  }
+
+  const colSpan = Math.max(1, by - ay)
+  const rowSpan = Math.max(1, bx - ax)
+  return {
+    x0: fit(colInk, colSpan, region.x0, limit.x0, -1, colMin),
+    x1: fit(colInk, colSpan, region.x1, limit.x1, 1, colMin),
+    y0: fit(rowInk, rowSpan, region.y0, limit.y0, -1, rowMin),
+    y1: fit(rowInk, rowSpan, region.y1, limit.y1, 1, rowMin),
+  }
+}
+
+/** Starting inset and outward limit for fitting a definition square's crop. */
+export function textBoxBounds(cell: { x0: number; y0: number; x1: number; y1: number }) {
+  const w = cell.x1 - cell.x0
+  const h = cell.y1 - cell.y0
+  const insetX = Math.max(2, w * TEXT_INSET)
+  const insetY = Math.max(2, h * TEXT_INSET)
+  const limitX = w * TEXT_LIMIT
+  const limitY = h * TEXT_LIMIT
+  return {
+    start: {
+      x0: cell.x0 + insetX,
+      y0: cell.y0 + insetY,
+      x1: cell.x1 - insetX,
+      y1: cell.y1 - insetY,
+    },
+    limit: {
+      x0: cell.x0 + limitX,
+      y0: cell.y0 + limitY,
+      x1: cell.x1 - limitX,
+      y1: cell.y1 - limitY,
+    },
+  }
+}
+
+/**
+ * Finds a definition square's internal hairline: the longest unbroken dark run.
+ *
 
 /**
  * Finds a definition square's internal hairline: the longest unbroken dark run.
@@ -682,8 +967,18 @@ function normalisedVariance(profile: Float64Array, extent: number): number {
  * that cannot be filled.
  *
  * A border row belongs to the grid if it holds a definition, or a square some
- * definition points into. Anything else is margin, so it is peeled away, one
- * edge at a time, until every edge earns its place.
+ * definition points into — *and* if it is printed at all. Anything else is
+ * margin, so it is peeled away, one edge at a time, until every edge earns its
+ * place.
+ *
+ * The second test is what catches a phantom row that lands on the page header,
+ * where the words are read as definitions and the row therefore looks used. It
+ * asks the only question that separates the grid from the page around it: is
+ * this row drawn? Measured on both test photos the answer is not close — the
+ * phantom edges agree with printed rules on 0.29, 0.02 and 0.01 of their
+ * borders, while every real row and column of both grids scores at least 0.78.
+ * The comparison is against the grid's own median rather than a fixed level, so
+ * a faintly printed or poorly lit page is judged against itself.
  *
  * @param reachable keys "r,c" of squares an arrow actually reaches
  */
@@ -696,16 +991,29 @@ export function trimUnusedEdges(
   let left = 0
 
   const at = (r: number, c: number) => detection.cells[r * detection.cols + c]
-  /** Does this line carry anything the grid needs? */
-  const used = (kind: 'row' | 'col', index: number) => {
+  const lineCells = (kind: 'row' | 'col', index: number) => {
     const limit = kind === 'row' ? cols : rows
+    const out: DetectedCell[] = []
     for (let k = 0; k < limit; k++) {
-      const r = kind === 'row' ? index : k
-      const c = kind === 'row' ? k : index
-      const cell = at(r, c)
-      if (!cell) continue
+      const cell = at(kind === 'row' ? index : k, kind === 'row' ? k : index)
+      if (cell) out.push(cell)
+    }
+    return out
+  }
+
+  const allFrames = detection.cells.map((cell) => cell.frameScore).sort((a, b) => a - b)
+  const medianFrame = allFrames[Math.floor(allFrames.length / 2)] ?? 0
+  const framedEnough = medianFrame * UNPRINTED_EDGE
+
+  /** Does this line carry anything the grid needs, and is it printed? */
+  const used = (kind: 'row' | 'col', index: number) => {
+    const cells = lineCells(kind, index)
+    if (cells.length === 0) return false
+    const frame = cells.reduce((total, cell) => total + cell.frameScore, 0) / cells.length
+    if (frame < framedEnough) return false
+    for (const cell of cells) {
       if (cell.kind === 'clue') return true
-      if (cell.kind === 'letter' && reachable.has(`${r},${c}`)) return true
+      if (cell.kind === 'letter' && reachable.has(`${cell.r},${cell.c}`)) return true
     }
     return false
   }
