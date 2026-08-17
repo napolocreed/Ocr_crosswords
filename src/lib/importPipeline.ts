@@ -11,10 +11,17 @@ import {
 } from './image'
 import {
   detectGrid,
+  refineSplits,
   textOrientationScore,
   type DetectedCell,
   type DetectionResult,
 } from './gridDetect'
+import {
+  detectArrows,
+  groupArrowsByClue,
+  type ArrowDetection,
+  type ArrowEvidence,
+} from './arrowDetect'
 import { OcrEngine, looksLikeWords, scoreClueText } from './ocr'
 import { toBlob, toDataUrl, nextFrame } from './canvas'
 import {
@@ -54,6 +61,8 @@ export interface StructureAnalysis {
    * sideways and needs a quarter turn before OCR can make sense of it.
    */
   looksSideways: boolean
+  /** The arrows read off the page, bends included. */
+  arrowDetection: ArrowDetection
 }
 
 /** Straightens the photo and detects the grid. Cheap enough to re-run live. */
@@ -80,6 +89,8 @@ export async function analyseStructure(
   const detection = detectGrid(bin)
   await nextFrame()
   const orientation = textOrientationScore(bin, detection.cells)
+  const arrowDetection = detectArrows(bin, detection)
+  await nextFrame()
 
   const cropScaleTarget = CROP_DIM / Math.max(quadW, quadH)
   // Never upsample beyond the source: that would only cost memory.
@@ -98,60 +109,125 @@ export async function analyseStructure(
     preview,
     // A clear margin, so an ambiguous grid never nags the user.
     looksSideways: orientation < -0.08,
+    arrowDetection,
   }
+}
+
+/**
+ * Re-reads the internal hairlines from the high-resolution crop source.
+ *
+ * Kept out of {@link analyseStructure} on purpose: that runs on every nudge of a
+ * crop corner and has to stay quick, whereas this only matters once, at the
+ * moment the grid is committed.
+ */
+export function refineStructure(analysis: StructureAnalysis): DetectionResult {
+  return refineSplits(toGray(analysis.cropSource), analysis.detection, analysis.cropScale)
 }
 
 /**
  * Picks each clue cell's arrows.
  *
- * Geometry does most of the work: an arrow can only point at a letter square, so
- * a clue cell with just one letter neighbour has no ambiguity at all. The image
- * evidence (a printed arrowhead biting into the border) is used to break ties,
- * and where it stays silent the conventional layout is assumed — which the
- * review step then lets the user correct in one tap.
+ * The printed glyphs are the authority: `arrowDetect` reads them off the page,
+ * which is the only way to tell a bend from a straight arrow — both start in the
+ * same square, so geometry alone cannot separate `down` from `downRight`.
+ *
+ * Geometry remains the fallback for squares whose glyph was too faint or too
+ * tangled with a rule to read, and it still resolves the common easy case: an
+ * arrow can only point at a fillable square.
  */
 function chooseArrows(
   cell: DetectedCell,
   kindAt: (r: number, c: number) => Cell['kind'] | undefined,
   clueCount: number,
+  evidence: ArrowEvidence[] | undefined,
 ): { arrows: ArrowKind[]; confidence: number } {
+  if (evidence && evidence.length > 0) {
+    const kinds = evidence.map((item) => item.kind)
+    const weakest = Math.min(...evidence.map((item) => item.confidence))
+    if (kinds.length >= clueCount) {
+      return { arrows: kinds.slice(0, clueCount), confidence: weakest }
+    }
+    // One glyph read but two definitions stacked. The list must still come back
+    // at full length: a missing entry would drop a definition from the puzzle
+    // altogether, so it would never be read, shown or correctable.
+    return {
+      arrows: padArrows(kinds, clueCount, cell, kindAt),
+      confidence: Math.min(weakest, 0.4),
+    }
+  }
+
   const rightOpen = kindAt(cell.r, cell.c + 1) === 'letter'
   const downOpen = kindAt(cell.r + 1, cell.c) === 'letter'
-  const rightSeen = cell.arrowRight >= 0.45
-  const downSeen = cell.arrowDown >= 0.45
 
   if (clueCount >= 2) {
     // Two definitions in one square must feed two different answers.
-    if (rightOpen && downOpen) return { arrows: ['right', 'down'], confidence: 0.7 }
-    if (rightOpen) return { arrows: ['right', 'rightDown'], confidence: 0.35 }
-    if (downOpen) return { arrows: ['down', 'downRight'], confidence: 0.35 }
+    if (rightOpen && downOpen) return { arrows: ['right', 'down'], confidence: 0.5 }
+    if (rightOpen) return { arrows: ['right', 'rightDown'], confidence: 0.3 }
+    if (downOpen) return { arrows: ['down', 'downRight'], confidence: 0.3 }
     return { arrows: ['right', 'down'], confidence: 0.15 }
   }
-
-  if (rightOpen && !downOpen) return { arrows: ['right'], confidence: rightSeen ? 0.95 : 0.85 }
-  if (downOpen && !rightOpen) return { arrows: ['down'], confidence: downSeen ? 0.95 : 0.85 }
-  if (rightOpen && downOpen) {
-    if (rightSeen && !downSeen) return { arrows: ['right'], confidence: 0.8 }
-    if (downSeen && !rightSeen) return { arrows: ['down'], confidence: 0.8 }
-    // Nothing decisive: the arrow is most often the one going right.
-    return { arrows: ['right'], confidence: 0.4 }
-  }
+  if (rightOpen && !downOpen) return { arrows: ['right'], confidence: 0.7 }
+  if (downOpen && !rightOpen) return { arrows: ['down'], confidence: 0.7 }
+  // Nothing decisive: the arrow is most often the one going right.
+  if (rightOpen && downOpen) return { arrows: ['right'], confidence: 0.35 }
   return { arrows: ['right'], confidence: 0.1 }
+}
+
+/**
+ * Tops a kind list up to `count` entries, preferring arrows that point at a
+ * fillable square and avoiding kinds already used by the same square.
+ */
+function padArrows(
+  kinds: ArrowKind[],
+  count: number,
+  cell: DetectedCell,
+  kindAt: (r: number, c: number) => Cell['kind'] | undefined,
+): ArrowKind[] {
+  const out = [...kinds]
+  const used = new Set(kinds)
+  const rightOpen = kindAt(cell.r, cell.c + 1) === 'letter'
+  const downOpen = kindAt(cell.r + 1, cell.c) === 'letter'
+  // Most plausible first: a straight arrow into an open square, then the bent
+  // forms, then anything at all rather than returning a short list.
+  const preference: ArrowKind[] = [
+    ...(rightOpen ? (['right'] as ArrowKind[]) : []),
+    ...(downOpen ? (['down'] as ArrowKind[]) : []),
+    ...(rightOpen ? (['rightDown'] as ArrowKind[]) : []),
+    ...(downOpen ? (['downRight'] as ArrowKind[]) : []),
+    'right',
+    'down',
+  ]
+  for (const candidate of preference) {
+    if (out.length >= count) break
+    if (used.has(candidate)) continue
+    used.add(candidate)
+    out.push(candidate)
+  }
+  // Still short only if every kind is taken, which cannot happen for count <= 4.
+  while (out.length < count) out.push('right')
+  return out
 }
 
 /** Builds a puzzle skeleton with empty definitions, ready for OCR or hand entry. */
 export function buildPuzzleFromDetection(
   detection: DetectionResult,
   title: string,
+  arrowDetection?: ArrowDetection,
 ): Puzzle {
   const { rows, cols } = detection
+  const byClue = groupArrowsByClue(arrowDetection?.arrows ?? [])
   const kindAt = (r: number, c: number) =>
     r < 0 || c < 0 || r >= rows || c >= cols ? undefined : detection.cells[r * cols + c]?.kind
 
   const cells: Cell[] = detection.cells.map((detected) => {
     if (detected.kind !== 'clue') return { kind: detected.kind }
     const clueCount = detected.split !== undefined ? 2 : 1
-    const { arrows, confidence } = chooseArrows(detected, kindAt, clueCount)
+    const { arrows, confidence } = chooseArrows(
+      detected,
+      kindAt,
+      clueCount,
+      byClue.get(`${detected.r},${detected.c}`),
+    )
     const clues: Clue[] = arrows.slice(0, clueCount).map((arrow) => ({
       id: makeId('cl_'),
       text: '',

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Puzzle, PuzzleAssets } from '../types'
 import type { Quad, RgbaImage } from '../lib/image'
 import { rotateRgba } from '../lib/image'
@@ -8,6 +8,7 @@ import {
   buildPuzzleFromDetection,
   makeThumbnail,
   readDefinitions,
+  refineStructure,
   suggestQuad,
   type StructureAnalysis,
 } from '../lib/importPipeline'
@@ -48,8 +49,18 @@ export function ImportScreen({ onDone, onCancel }: Props) {
   const [ocrProgress, setOcrProgress] = useState({ done: 0, total: 0, note: '' })
   const fileInput = useRef<HTMLInputElement>(null)
 
-  /** The photo as the user currently sees it, rotation applied. */
-  const oriented = photo && turns ? rotateRgba(photo, turns) : photo
+  /**
+   * The photo as the user currently sees it, rotation applied.
+   *
+   * Memoised deliberately: rotating a 2400px photo allocates ~20 MB and takes
+   * long enough to be felt. Recomputing it per render also made it a fresh
+   * object every time, which retriggered the analysis effect in a loop and left
+   * the reported grid size racing between runs.
+   */
+  const oriented = useMemo(
+    () => (photo && turns ? rotateRgba(photo, turns) : photo),
+    [photo, turns],
+  )
 
   const pick = async (file: File) => {
     setError(null)
@@ -102,22 +113,37 @@ export function ImportScreen({ onDone, onCancel }: Props) {
 
   const startOcr = async () => {
     if (!analysis || !oriented) return
-    const detection = analysis.detection
+    // Hairlines are re-read at full resolution here: at preview resolution many
+    // are invisible, and each one missed loses a definition.
+    const detection = refineStructure(analysis)
     if (detection.rows < 2 || detection.cols < 2) {
       setError('Aucune grille détectée. Ajuste le cadrage sur le contour de la grille.')
       return
     }
     setStep('ocr')
     setError(null)
-    const puzzle = buildPuzzleFromDetection(detection, title.trim() || defaultTitle())
+    const puzzle = buildPuzzleFromDetection(
+      detection,
+      title.trim() || defaultTitle(),
+      analysis.arrowDetection,
+    )
     setOcrProgress({ done: 0, total: 0, note: 'Préparation du moteur de lecture…' })
     try {
       const engine = await createBrowserOcrEngine()
       await engine.init()
       setOcrProgress({ done: 0, total: 0, note: 'Lecture des définitions…' })
-      const result = await readDefinitions(puzzle, analysis, engine, (progress) => {
-        setOcrProgress({ done: progress.done, total: progress.total, note: progress.lastText ?? '' })
-      })
+      const result = await readDefinitions(
+        puzzle,
+        { ...analysis, detection },
+        engine,
+        (progress) => {
+          setOcrProgress({
+            done: progress.done,
+            total: progress.total,
+            note: progress.lastText ?? '',
+          })
+        },
+      )
       await engine.terminate()
       if (result.quality.suspect) {
         // Almost nothing legible came out. By far the most common cause is a
@@ -145,12 +171,16 @@ export function ImportScreen({ onDone, onCancel }: Props) {
   /** Import the structure only, and let the user type the definitions. */
   const skipOcr = async () => {
     if (!analysis) return
-    const detection = analysis.detection
+    const detection = refineStructure(analysis)
     if (detection.rows < 2 || detection.cols < 2) {
       setError('Aucune grille détectée. Ajuste le cadrage sur le contour de la grille.')
       return
     }
-    const puzzle = buildPuzzleFromDetection(detection, title.trim() || defaultTitle())
+    const puzzle = buildPuzzleFromDetection(
+      detection,
+      title.trim() || defaultTitle(),
+      analysis.arrowDetection,
+    )
     const thumbnail = await makeThumbnail(analysis.preview)
     onDone({ ...puzzle, thumbnail }, { puzzleId: puzzle.id, crops: {} })
   }

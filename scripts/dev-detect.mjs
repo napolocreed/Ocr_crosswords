@@ -21,6 +21,7 @@ import {
   warpPerspectiveRgba,
 } from '../src/lib/image.ts'
 import { detectGrid, sampleCurve as sampleCurveLib } from '../src/lib/gridDetect.ts'
+import { suggestQuad } from '../src/lib/importPipeline.ts'
 
 const args = process.argv.slice(2)
 const file = args.find((a) => !a.startsWith('--')) ?? 'fixtures/sport-cerebral-42.jpg'
@@ -50,14 +51,16 @@ if (rotate) {
 const smallGray = downscaleGray(toGray(rgba), 900)
 const smallBin = adaptiveThreshold(smallGray, 0.06, 0.12)
 out('01-binary-small', binaryToRgba(smallBin))
-// Deliberately loose crop: the whole (rotated) frame. Detection is expected to
-// find the grid inside it on its own.
-const quad = [
-  { x: 0, y: 0 },
-  { x: rgba.width, y: 0 },
-  { x: rgba.width, y: rgba.height },
-  { x: 0, y: rgba.height },
-]
+// Loose crop by default (the whole rotated frame), or the app's own suggestion
+// with --suggest, to compare what the browser actually analyses.
+const quad = args.includes('--suggest')
+  ? suggestQuad(rgba)
+  : [
+      { x: 0, y: 0 },
+      { x: rgba.width, y: 0 },
+      { x: rgba.width, y: rgba.height },
+      { x: 0, y: rgba.height },
+    ]
 void smallBin
 
 // --- Pass 2: straighten, then detect on the straightened image ------------
@@ -95,16 +98,12 @@ for (let r = 0; r < result.rows; r++) {
   console.log(String(r).padStart(2) + ' ' + line)
 }
 
-console.log('\narrow scores for definition cells (r,c right/down):')
 const clues = result.cells.filter((cell) => cell.kind === 'clue')
-for (const cell of clues.slice(0, 40)) {
-  console.log(
-    `  ${String(cell.r).padStart(2)},${String(cell.c).padStart(2)}  ` +
-      `ink=${cell.inkRatio.toFixed(3)} right=${cell.arrowRight.toFixed(2)} down=${cell.arrowDown.toFixed(2)}` +
-      (cell.split !== undefined ? '  [split]' : ''),
-  )
-}
-console.log(`  ... ${clues.length} definition cells total`)
+const splits = clues.filter((cell) => cell.split !== undefined)
+console.log(
+  `\n${clues.length} definition cells, ${splits.length} with an internal hairline ` +
+    `=> ${clues.length + splits.length} definitions`,
+)
 
 // Ink-ratio histogram: shows whether the letter/definition threshold is safe.
 const buckets = new Array(20).fill(0)
@@ -135,14 +134,6 @@ for (const cell of result.cells) {
   if (cell.split !== undefined) {
     const sy = Math.round(cell.y0 + cell.split * (cell.y1 - cell.y0))
     for (let x = Math.round(cell.x0); x < Math.round(cell.x1); x++) paint(x, sy, [255, 140, 0])
-  }
-  if (cell.arrowRight > 0.5) {
-    const my = Math.round((cell.y0 + cell.y1) / 2)
-    for (let d = -4; d <= 4; d++) paint(Math.round(cell.x1) + d, my, [255, 0, 255])
-  }
-  if (cell.arrowDown > 0.5) {
-    const mx = Math.round((cell.x0 + cell.x1) / 2)
-    for (let d = -4; d <= 4; d++) paint(mx, Math.round(cell.y1) + d, [255, 0, 255])
   }
 }
 out('06-overlay', { data: overlay, width: outW, height: outH })

@@ -49,6 +49,36 @@ Une seule chose à faire côté GitHub : **Settings → Pages → Source : GitHu
 Le chemin de base est déduit du nom du dépôt. Pour un domaine personnalisé ou une autre
 racine, surcharge `VITE_BASE` (par exemple `VITE_BASE=/ npm run build`).
 
+## Comment marchent les flèches
+
+C'est le seul endroit où la géométrie ne suffit pas : une flèche droite `↓` et une flèche
+coudée `└→` partent toutes deux de la case sous la définition, donc rien dans la structure ne
+les distingue. Il faut lire le glyphe imprimé.
+
+Ce qui rend la chose abordable : **les cases à remplir sont vides**. Tout composant connexe
+qu'on y trouve est donc soit un glyphe de flèche, soit un indice de mot mystère — et les deux
+se séparent facilement, une flèche partant toujours d'un bord alors qu'un indice flotte au
+milieu.
+
+Le classement repose ensuite sur deux faits mesurés sur de vraies photos :
+
+1. **L'axe long du glyphe donne le sens de lecture de la réponse.** Les deux bras d'un coude
+   sont inégaux et celui qui porte la pointe est toujours le plus long.
+2. **Le bord d'entrée désigne la case-définition propriétaire.** En général une seule des
+   deux cases voisines *est* une définition, ce qui tranche sans rien deviner : un glyphe
+   vertical dans une case dont la seule définition est à gauche *est* forcément un coude.
+
+Quand les deux voisines sont des définitions, on retombe sur la forme du coude — un `L`
+laisse un coin de sa boîte vide, une ligne droite la remplit (mesuré : 0,34–0,42 de
+remplissage pour les coudes contre 0,47–1,00 pour les droites).
+
+Une première version classait par le bord touché : elle échouait silencieusement, parce qu'un
+coude blotti dans un angle touche *les deux* bords et que tout arbitrage entre eux est un
+tirage au sort — la moitié des coudes étaient rapportés comme des flèches droites.
+
+**Contrôle objectif** : avec des flèches correctes, toute case à remplir doit être atteignable
+depuis une définition. Les cases orphelines sont passées de 36 à **3 sur 183**.
+
 ## Comment marche la détection
 
 C'est la partie délicate : une photo à main levée d'un magazine broché n'est ni plane ni

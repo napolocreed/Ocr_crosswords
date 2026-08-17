@@ -1,4 +1,4 @@
-import type { BinaryImage } from './image'
+import type { BinaryImage, GrayImage } from './image'
 import type { CellKind } from '../types'
 import { detectBoundaries, sampleCurve, BANDS } from './gridGeometry'
 
@@ -7,8 +7,8 @@ import { detectBoundaries, sampleCurve, BANDS } from './gridGeometry'
  *
  * Geometry comes from {@link detectBoundaries}, which returns each rule as a
  * curve following the page's bow. This module then only has to decide, for each
- * cell, whether it is empty, holds definitions, or is a dead square — and where
- * its arrows point.
+ * cell, whether it is empty, holds definitions, or is a dead square. Reading the
+ * arrows is a separate job, in `arrowDetect.ts`.
  */
 
 export interface DetectedCell {
@@ -22,9 +22,6 @@ export interface DetectedCell {
   kind: CellKind
   /** Fraction of dark pixels in the cell's interior. */
   inkRatio: number
-  /** 0–1 evidence of an arrow leaving towards the right / downward neighbour. */
-  arrowRight: number
-  arrowDown: number
   /** Relative height (0–1) of an internal hairline: two definitions stacked. */
   split?: number
 }
@@ -117,8 +114,6 @@ export function detectGrid(bin: BinaryImage, opts: DetectOptions = {}): Detectio
         y1,
         kind,
         inkRatio,
-        arrowRight: arrowScore(bin, x1, (y0 + y1) / 2, (x1 - x0) * 0.3, 'right'),
-        arrowDown: arrowScore(bin, (x0 + x1) / 2, y1, (y1 - y0) * 0.3, 'down'),
       }
       if (kind === 'clue') {
         const split = findInternalSeparator(bin, x0, y0, x1, y1)
@@ -140,6 +135,106 @@ export function detectGrid(bin: BinaryImage, opts: DetectOptions = {}): Detectio
     tiltColsDeg: (vertical.tilt * 180) / Math.PI,
     warnings,
   }
+}
+
+/**
+ * Recomputes which definition squares hold two stacked definitions, reading the
+ * hairline out of the greyscale image rather than the binarised one.
+ *
+ * The hairline is the finest thing printed on the page, and the browser's own
+ * image decoding is what erases it: area-averaged downscaling of a phone photo
+ * dilutes a one-pixel rule into pale grey, which the threshold then discards.
+ * Measured on the same photo and crop, binarised detection found 29 hairlines in
+ * Node — whose sampling happens to alias and keep them — but only 11 in Chromium.
+ *
+ * Missing one is not cosmetic: the square then yields a single definition, and
+ * the other is never read, never shown, and never correctable. Looking for a
+ * darkness ridge instead of for ink survives the dilution, because a diluted
+ * line is still the darkest row in its neighbourhood.
+ *
+ * @param gray greyscale image, ideally higher resolution than the detection pass
+ * @param scale multiply detection coordinates by this to reach `gray`
+ */
+export function refineSplits(
+  gray: GrayImage,
+  detection: DetectionResult,
+  scale: number,
+): DetectionResult {
+  const cells = detection.cells.map((cell) => {
+    if (cell.kind !== 'clue') return cell
+    const split = findHairlineInGray(
+      gray,
+      cell.x0 * scale,
+      cell.y0 * scale,
+      cell.x1 * scale,
+      cell.y1 * scale,
+    )
+    if (split === null) {
+      if (cell.split === undefined) return cell
+      const { split: _dropped, ...rest } = cell
+      return rest
+    }
+    return { ...cell, split }
+  })
+  return { ...detection, cells }
+}
+
+/**
+ * Finds a definition square's internal hairline as a darkness ridge.
+ *
+ * @returns the hairline's height as a 0–1 fraction of the cell, or null
+ */
+function findHairlineInGray(
+  gray: GrayImage,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+): number | null {
+  const ax = Math.max(0, Math.round(x0 + (x1 - x0) * 0.2))
+  const bx = Math.min(gray.width, Math.round(x1 - (x1 - x0) * 0.2))
+  const width = bx - ax
+  if (width <= 6) return null
+  // Stay clear of the square's own top and bottom rules.
+  const margin = (y1 - y0) * 0.26
+  const top = Math.max(0, Math.round(y0 + margin))
+  const bottom = Math.min(gray.height, Math.round(y1 - margin))
+  if (bottom - top < 5) return null
+
+  const rowMeans: number[] = []
+  for (let y = top; y < bottom; y++) {
+    let sum = 0
+    const row = y * gray.width
+    for (let x = ax; x < bx; x++) sum += gray.data[row + x]!
+    rowMeans.push(sum / width)
+  }
+
+  // Paper level from the brighter rows, so surrounding text cannot pass for it.
+  const sorted = [...rowMeans].sort((a, b) => a - b)
+  const paper = sorted[Math.floor(sorted.length * 0.75)]!
+  let darkest = Infinity
+  let darkestIndex = -1
+  for (let i = 0; i < rowMeans.length; i++) {
+    if (rowMeans[i]! < darkest) {
+      darkest = rowMeans[i]!
+      darkestIndex = i
+    }
+  }
+  if (darkestIndex < 0 || paper <= 0) return null
+
+  // A rule has to be appreciably darker than the paper around it...
+  const contrast = (paper - darkest) / paper
+  if (contrast < 0.1) return null
+
+  // ...and has to run right across the square, which is what separates it from a
+  // line of definition text that happens to be dark on average.
+  const cut = paper - (paper - darkest) * 0.45
+  const y = top + darkestIndex
+  let covered = 0
+  for (let x = ax; x < bx; x++) if (gray.data[y * gray.width + x]! <= cut) covered++
+  if (covered / width < 0.72) return null
+
+  return (y - y0) / (y1 - y0)
 }
 
 /** Ink ratio over the cell's interior, inset to exclude the printed borders. */
@@ -167,46 +262,6 @@ function interiorInkRatio(
     }
   }
   return total === 0 ? 0 : ink / total
-}
-
-/**
- * Arrowheads sit against a cell border, biting into the square the answer
- * starts in. The probe is a short box straddling the border, offset towards the
- * neighbour; the rule itself is subtracted by comparing the box's ink against
- * the ink of the bare border away from the arrow position.
- */
-function arrowScore(
-  bin: BinaryImage,
-  bx: number,
-  by: number,
-  reach: number,
-  dir: 'right' | 'down',
-): number {
-  const measure = (centreAcross: number) => {
-    const behind = Math.max(2, Math.round(reach * 0.35))
-    const ahead = Math.max(3, Math.round(reach * 1.0))
-    const across = Math.max(3, Math.round(reach * 0.55))
-    const x0 = Math.round(dir === 'right' ? bx - behind : centreAcross - across)
-    const x1 = Math.round(dir === 'right' ? bx + ahead : centreAcross + across)
-    const y0 = Math.round(dir === 'right' ? centreAcross - across : by - behind)
-    const y1 = Math.round(dir === 'right' ? centreAcross + across : by + ahead)
-    let ink = 0
-    let total = 0
-    for (let y = Math.max(0, y0); y < Math.min(bin.height, y1); y++) {
-      const row = y * bin.width
-      for (let x = Math.max(0, x0); x < Math.min(bin.width, x1); x++) {
-        if (bin.data[row + x]) ink++
-        total++
-      }
-    }
-    return total === 0 ? 0 : ink / total
-  }
-
-  const centre = dir === 'right' ? by : bx
-  // The rule crosses both probes equally, so the difference isolates the head.
-  const atArrow = measure(centre)
-  const offArrow = Math.min(measure(centre - reach * 1.8), measure(centre + reach * 1.8))
-  return Math.min(1, Math.max(0, (atArrow - offArrow) / 0.12))
 }
 
 /**

@@ -161,6 +161,26 @@ await check('definitions pass lists clues with crops', async () => {
   console.log(`       ${wordy.length}/${texts.length} non-empty results look like words`)
   if (wordy.length < 30) throw new Error(`only ${wordy.length} word-like results out of ${texts.length}`)
 })
+
+await check('arrow assignment keeps every definition it is given', async () => {
+  // Guards the padding rule: a square with two stacked definitions must yield
+  // two clue rows, never one. 74 is the measured baseline for this fixture in
+  // Chromium — Node reaches ~98 on the same photo, and that gap is a known open
+  // issue in hairline detection, tracked in the README rather than here.
+  const rows = await page.locator('.review-row').count()
+  console.log(`       ${rows} definition rows`)
+  if (rows < 74) throw new Error(`only ${rows} definition rows — a regression`)
+})
+
+await check('bent arrows are read from the page', async () => {
+  // Both bent labels read "... puis ...", so one selector covers them.
+  const bent = await page
+    .locator('.arrow-picker button[aria-pressed="true"][aria-label*="puis"]')
+    .count()
+  const total = await page.locator('.arrow-picker').count()
+  console.log(`       ${bent} bent of ${total} definitions shown`)
+  if (bent < 3) throw new Error(`expected several bent arrows, found ${bent}`)
+})
 await shot('5-review-definitions')
 
 console.log('\n5b. mystery word')
