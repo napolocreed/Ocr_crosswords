@@ -30,7 +30,7 @@ import {
   cropRgba,
   preprocessForOcr,
 } from '../src/lib/image.ts'
-import { detectGrid, refineSplits } from '../src/lib/gridDetect.ts'
+import { detectGrid, refineSplits, trimUnusedEdges } from '../src/lib/gridDetect.ts'
 import { detectArrows } from '../src/lib/arrowDetect.ts'
 import { suggestQuad } from '../src/lib/importPipeline.ts'
 import { OcrEngine } from '../src/lib/ocr.ts'
@@ -77,22 +77,45 @@ const small = warpAt(DETECT_DIM)
 const big = warpAt(Math.min(CROP_DIM, Math.max(qw, qh)))
 const ratio = big.w / small.w
 
-const bin = adaptiveThreshold(toGray(small.img), 0.05, 0.12)
-const detected = detectGrid(bin)
+const smallGray = toGray(small.img)
+const bin = adaptiveThreshold(smallGray, 0.05, 0.12)
+const detected = detectGrid(bin, smallGray)
 const grid = refineSplits(toGray(big.img), detected, ratio)
-const arrows = detectArrows(bin, grid)
+let grid2 = grid
+let arrows = detectArrows(bin, grid2)
+{
+  const step = { right: [0, 1], down: [1, 0], rightDown: [1, 0], downRight: [0, 1] }
+  const start = { right: [0, 1], rightDown: [0, 1], down: [1, 0], downRight: [1, 0] }
+  const cellAt = (g, r, c) =>
+    r < 0 || c < 0 || r >= g.rows || c >= g.cols ? undefined : g.cells[r * g.cols + c]
+  const reach = new Set()
+  for (const a of arrows.arrows) {
+    const [sr, sc] = start[a.kind]
+    const [dr, dc] = step[a.kind]
+    let r = a.clue.r + sr
+    let c = a.clue.c + sc
+    while (cellAt(grid2, r, c)?.kind === 'letter') {
+      reach.add(`${r},${c}`)
+      r += dr
+      c += dc
+    }
+  }
+  grid2 = trimUnusedEdges(grid2, reach)
+  arrows = detectArrows(bin, grid2)
+}
+const gridTrimmed = grid2
 
 /* ---------------------------------------------------------------- structure */
 
-const clueCells = grid.cells.filter((c) => c.kind === 'clue')
+const clueCells = gridTrimmed.cells.filter((c) => c.kind === 'clue')
 const withHairline = clueCells.filter((c) => c.split !== undefined)
-const letterCells = grid.cells.filter((c) => c.kind === 'letter')
+const letterCells = gridTrimmed.cells.filter((c) => c.kind === 'letter')
 const producedCount = clueCells.length + withHairline.length
 
 console.log(`photo      ${photo.width}x${photo.height} (capped at ${MAX_PHOTO_DIM})`)
 console.log(`detect at  ${small.w}x${small.h}, crops from ${big.w}x${big.h}`)
 console.log(`\n=== STRUCTURE ===`)
-console.log(`grid            ${grid.cols} x ${grid.rows}   (truth ${truth.grid.cols} x ${truth.grid.rows})`)
+console.log(`grid            ${gridTrimmed.cols} x ${gridTrimmed.rows}   (truth ${truth.grid.cols} x ${truth.grid.rows})`)
 console.log(`clue cells      ${clueCells.length}`)
 console.log(`with hairline   ${withHairline.length}`)
 console.log(`letter cells    ${letterCells.length}`)
@@ -239,7 +262,9 @@ const reachable = new Set()
 const step = { right: [0, 1], down: [1, 0], rightDown: [1, 0], downRight: [0, 1] }
 const start = { right: [0, 1], rightDown: [0, 1], down: [1, 0], downRight: [1, 0] }
 const at = (r, c) =>
-  r < 0 || c < 0 || r >= grid.rows || c >= grid.cols ? undefined : grid.cells[r * grid.cols + c]
+  r < 0 || c < 0 || r >= gridTrimmed.rows || c >= gridTrimmed.cols
+    ? undefined
+    : gridTrimmed.cells[r * gridTrimmed.cols + c]
 for (const a of arrows.arrows) {
   const [sr, sc] = start[a.kind]
   const [dr, dc] = step[a.kind]

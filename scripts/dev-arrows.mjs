@@ -53,7 +53,7 @@ const big = warpAt(cropDim)
 const ratio = big.w / small.w
 
 const bin = adaptiveThreshold(toGray(small.img), 0.05, 0.12)
-const result = detectGrid(bin)
+const result = detectGrid(bin, toGray(small.img))
 console.log(`grid ${result.cols} x ${result.rows}, crop source ${big.w}x${big.h}`)
 
 const at = (r, c) =>

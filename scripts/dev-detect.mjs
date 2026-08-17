@@ -20,7 +20,11 @@ import {
   rotateRgba,
   warpPerspectiveRgba,
 } from '../src/lib/image.ts'
-import { detectGrid, sampleCurve as sampleCurveLib } from '../src/lib/gridDetect.ts'
+import {
+  detectGrid,
+  textOrientationScore,
+  sampleCurve as sampleCurveLib,
+} from '../src/lib/gridDetect.ts'
 import { suggestQuad } from '../src/lib/importPipeline.ts'
 
 const args = process.argv.slice(2)
@@ -77,12 +81,16 @@ const bin = adaptiveThreshold(gray, 0.05, 0.12)
 out('03-binary', binaryToRgba(bin))
 
 const t1 = Date.now()
-const result = detectGrid(bin)
+const result = detectGrid(bin, gray, { frameThreshold: flag('frame', 0.6) })
 console.log(`\ndetected ${result.cols} cols x ${result.rows} rows in ${Date.now() - t1}ms`)
 console.log('warnings:', result.warnings.length ? result.warnings : 'none')
 
 console.log(`pitch: x=${result.pitchX.toFixed(1)}px y=${result.pitchY.toFixed(1)}px`)
 console.log(`tilt: rows=${result.tiltRowsDeg.toFixed(2)}deg cols=${result.tiltColsDeg.toFixed(2)}deg`)
+console.log(
+  `orientation score: ${textOrientationScore(bin, result.cells).toFixed(3)} ` +
+    `(positive = text reads across; app warns below -0.08)`,
+)
 console.log(`warped size: ${outW}x${outH}`)
 
 // Map: '.' letter, '#' block, letters/digits show clue cells and their arrows.

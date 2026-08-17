@@ -171,46 +171,65 @@ seule métrique qui compte : combien de définitions sont lues au caractère pr�
 
 Sur une page à plat, bien éclairée, sans recadrage manuel :
 
-| | Résultat | Vérité |
-| --- | --- | --- |
-| Grille | 14 × 19 | 14 × 20 |
-| Cases-définitions | 68 | **41** |
-| Filets internes | 48 | **30** |
-| Définitions produites | 116 | **71** |
-| **Exactes** | **31 (43,7 %)** | |
-| Presque (≤ 2 corrections) | 6 (8,5 %) | |
-| Manquantes | 34 (47,9 %) | |
-| **Parasites** | **56** | |
+| | Avant | **Après** | Vérité |
+| --- | --- | --- | --- |
+| Grille | 14 × 19 | **13 × 17** | 13 × 17 |
+| Cases-définitions | 68 | **41** | 41 |
+| Cases-lettres | 198 | **180** | 180 |
+| Définitions produites | 116 | **69** | 71 |
+| **Exactes** | 31 (43,7 %) | **55 (77,5 %)** | |
+| Presque (≤ 2 corrections) | 6 | **11** | |
+| **Utilisables** | 37 (52,1 %) | **66 (93,0 %)** | |
+| **Parasites** | **56** | **3** | |
+| Cases orphelines | 7 | **2** | 0 |
+
+La structure est désormais **exacte** : le nombre de colonnes, de rangées, de
+cases-définitions et de cases-lettres correspond au papier.
 
 ### Attention aux métriques indirectes
 
 Les chiffres publiés avant l'existence de `score.mjs` étaient faux — pas les
 nombres, la question posée. Ils comptaient les chaînes qui *ressemblent* à des
 mots (majuscules, une voyelle, 4 caractères), or `"LEUVT EEE ÇA REMPL LE VERRI"`
-satisfait ce test. Le proxy annonçait ~80 % là où la réalité est ~44 %.
+satisfait ce test. Le proxy annonçait ~80 % là où la réalité était ~44 %.
 
 C'est la leçon la plus utile de ce projet : **une métrique indirecte peut faire
-croire à un succès pendant des heures.** Toute décision de réglage doit se juger
-contre ce que la page dit réellement.
+croire à un succès pendant des heures.**
 
-### La cause dominante
+### Les trois corrections qui ont produit ce gain
 
-Le tableau la désigne : la sur-détection. 27 fausses cases-définitions et 18 faux
-filets produisent à eux seuls la cinquantaine de lectures parasites, et ces
-fausses cases **volent aussi des cases-lettres** (198 détectées contre 210
-réelles), ce qui casse des mots.
+1. **Une case-définition doit d'abord être une case de la grille imprimée.** Le
+   parcours des frontières prolonge la grille d'une ou deux rangées au-delà du
+   papier — sur l'en-tête, la marge, l'ombre de reliure — et ces bandes sont assez
+   sombres pour passer n'importe quel test de noirceur. 26 des 68 « définitions »
+   étaient de tels fantômes. Seule l'impression encadre une case.
+2. **Un filet interne se reconnaît à son segment continu, pas à sa noirceur.** À
+   la résolution d'une photo, une ligne de capitales est en moyenne plus sombre
+   qu'un filet d'un pixel ; l'ancien test trouvait donc la ligne de texte au moins
+   aussi souvent que le filet, inventant des scissions et coupant des mots en deux.
+   Un filet est continu, du texte est haché — et les deux moitiés d'une vraie case
+   scindée portent toutes deux du texte.
+3. **Les bords fantômes sont pelés.** Une rangée de bordure appartient à la grille
+   si elle porte une définition ou une case qu'une flèche atteint. Sinon c'est de
+   la marge. C'est ce qui fait tomber les orphelines de 47 à 2.
 
-Le mécanisme suspecté est le papier. Ces pages laissent passer l'impression du
-verso, et le seuillage **localement** adaptatif normalise cette pâleur en la
-promouvant au rang d'encre. Un critère de noirceur **absolue**, référencé au
-niveau du papier de la page, sépare les deux ; un critère local ne peut pas.
+Et une hypothèse **réfutée** par la mesure : j'attribuais les fausses cases au
+texte du verso traversant le papier. C'était faux. Un critère de noirceur absolue
+référencé à un percentile global s'est révélé *pire* que le seuillage local qu'il
+remplaçait. La vraie cause était géométrique.
 
 ## Limites connues
 
-- **Une photo à l'envers n'est pas détectée automatiquement.** Le test d'orientation repère
-  une photo couchée (le texte court de haut en bas) mais pas un demi-tour : dans les deux cas
-  les lignes de texte sont horizontales. Un contrôle de vraisemblance après l'OCR rattrape le
-  coup et propose le demi-tour, au lieu d'enregistrer du bruit en silence.
+- **L'orientation ne se détecte de façon fiable que sur une page à plat.** Mesuré dans les
+  deux sens sur deux photos : la page plane sépare nettement (+0,73 à l'endroit, −0,67
+  couchée), la page bombée ne donne aucun signal (+0,06 et +0,23 — dans le mauvais ordre).
+  L'app ne prévient donc que lorsqu'elle est sûre : le silence est la réponse honnête quand
+  il n'y a pas de signal. Le contrôle de vraisemblance après l'OCR rattrape le cas d'une
+  page mal orientée, demi-tour compris.
+- **Le gain n'est vérifié que sur une page à plat.** Sur la photo bombée, les définitions
+  produites passent de 97 à 65 — 97 était manifestement trop, 65 est plausible, mais faute de
+  transcription de cette page je ne peux pas l'affirmer. Photographier la page **bien à plat
+  change beaucoup** le résultat.
 - La détection trouve souvent **une rangée ou une colonne en trop** (bord de page, en-tête).
   Un recadrage serré l'évite, et la passe « Structure » de la relecture permet de rogner.
 - Les **flèches coudées** ne sont pas reconnues automatiquement : elles sont proposées comme

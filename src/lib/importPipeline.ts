@@ -13,6 +13,7 @@ import {
   detectGrid,
   refineSplits,
   textOrientationScore,
+  trimUnusedEdges,
   type DetectedCell,
   type DetectionResult,
 } from './gridDetect'
@@ -27,6 +28,8 @@ import { toBlob, toDataUrl, nextFrame } from './canvas'
 import {
   type ArrowKind,
   type Cell,
+  arrowDirection,
+  arrowStartOffset,
   type Clue,
   type Puzzle,
   type PuzzleAssets,
@@ -83,12 +86,21 @@ export async function analyseStructure(
   )
   await nextFrame()
 
-  const bin = adaptiveThreshold(toGray(preview), 0.05, 0.12)
+  const previewGray = toGray(preview)
+  const bin = adaptiveThreshold(previewGray, 0.05, 0.12)
   await nextFrame()
-  const detection = detectGrid(bin)
+  // Classification needs the greyscale as well as the binary: absolute darkness
+  // is what separates print from the reverse page showing through.
+  const detected = detectGrid(bin, previewGray)
   await nextFrame()
-  const orientation = textOrientationScore(bin, detection.cells)
-  const arrowDetection = detectArrows(bin, detection)
+  const orientation = textOrientationScore(bin, detected.cells)
+
+  // Arrows first, then peel the phantom border rows the boundary walk tends to
+  // add past the print, then read the arrows again on the grid that remains.
+  const firstPass = detectArrows(bin, detected)
+  const detection = trimUnusedEdges(detected, reachableSquares(detected, firstPass.arrows))
+  const arrowDetection =
+    detection === detected ? firstPass : detectArrows(bin, detection)
   await nextFrame()
 
   const cropScaleTarget = CROP_DIM / Math.max(quadW, quadH)
@@ -106,10 +118,44 @@ export async function analyseStructure(
     cropSource,
     cropScale: cropScale / detectScale,
     preview,
-    // A clear margin, so an ambiguous grid never nags the user.
-    looksSideways: orientation < -0.08,
+    /*
+     * Only warn when the evidence is unambiguous. Measured in both orientations
+     * on two photos: the flat page separates cleanly (+0.73 upright, -0.67
+     * sideways), but the bowed one gives no signal at all (+0.06 upright, +0.23
+     * sideways — the wrong way round). A threshold tight enough to catch that
+     * page would fire on correctly-oriented photos, and a warning that tells you
+     * to rotate an already-upright photo is worse than staying quiet. Silence is
+     * the honest answer when there is no signal; the post-OCR plausibility check
+     * catches a misread page afterwards either way.
+     */
+    looksSideways: orientation < -0.25,
     arrowDetection,
   }
+}
+
+/** Squares an arrow actually reaches, as "r,c" keys. */
+function reachableSquares(
+  detection: DetectionResult,
+  arrows: readonly { clue: { r: number; c: number }; kind: ArrowKind }[],
+): Set<string> {
+  const at = (r: number, c: number) =>
+    r < 0 || c < 0 || r >= detection.rows || c >= detection.cols
+      ? undefined
+      : detection.cells[r * detection.cols + c]
+  const reachable = new Set<string>()
+  for (const arrow of arrows) {
+    const direction = arrowDirection(arrow.kind)
+    const { dr, dc } = arrowStartOffset(arrow.kind)
+    const step = direction === 'across' ? { dr: 0, dc: 1 } : { dr: 1, dc: 0 }
+    let r = arrow.clue.r + dr
+    let c = arrow.clue.c + dc
+    while (at(r, c)?.kind === 'letter') {
+      reachable.add(`${r},${c}`)
+      r += step.dr
+      c += step.dc
+    }
+  }
+  return reachable
 }
 
 /**

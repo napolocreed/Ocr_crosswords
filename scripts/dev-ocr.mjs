@@ -71,7 +71,7 @@ const ratio = big.w / small.w
 console.log(`detect at ${small.w}x${small.h}, crop from ${big.w}x${big.h} (x${ratio.toFixed(2)})`)
 
 const bin = adaptiveThreshold(toGray(small.img), 0.05, 0.12)
-const detected = detectGrid(bin)
+const detected = detectGrid(bin, toGray(small.img))
 const result = refineSplits(toGray(big.img), detected, ratio)
 console.log(`grid: ${result.cols} x ${result.rows}, pitch ${result.pitchX.toFixed(0)}px`)
 
