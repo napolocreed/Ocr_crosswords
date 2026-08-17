@@ -46,6 +46,13 @@ Scripts utiles :
 Le workflow `.github/workflows/deploy.yml` construit et publie à chaque push sur `main`.
 Une seule chose à faire côté GitHub : **Settings → Pages → Source : GitHub Actions**.
 
+Si le job `build` passe mais que `deploy` échoue sur `Branch "main" is not allowed to deploy
+to github-pages due to environment protection rules`, c'est que ce réglage manque : la source
+est restée sur « Deploy from a branch », et l'environnement `github-pages` n'autorise alors que
+la branche configurée là. Bascule la source sur GitHub Actions, puis relance le run échoué
+(*Re-run all jobs*). Si le message persiste, vérifie **Settings → Environments → github-pages →
+Deployment branches and tags** : `main` doit y figurer.
+
 Le chemin de base est déduit du nom du dépôt. Pour un domaine personnalisé ou une autre
 racine, surcharge `VITE_BASE` (par exemple `VITE_BASE=/ npm run build`).
 
