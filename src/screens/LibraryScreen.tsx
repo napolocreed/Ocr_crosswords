@@ -177,6 +177,9 @@ export function LibraryScreen({
                 </div>
                 <div style={{ marginTop: 4, display: 'flex', gap: 6, alignItems: 'center' }}>
                   {!puzzle.reviewed && <span className="badge warn">à relire</span>}
+                  {puzzle.mystery && puzzle.mystery.slots.length > 0 && (
+                    <span className="badge">✦ mystère</span>
+                  )}
                   {done && <span className="badge ok">terminée</span>}
                   {!done && ratio > 0 && (
                     <span className="badge">{Math.round(ratio * 100)} %</span>

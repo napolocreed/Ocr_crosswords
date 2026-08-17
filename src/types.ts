@@ -77,6 +77,24 @@ export interface Cell {
   clues?: Clue[]
 }
 
+/**
+ * The bonus answer many magazines add alongside the grid: a definition printed
+ * in the margin, whose answer is spelled by the letters of a handful of numbered
+ * squares, read in numbered order.
+ *
+ * Nothing is stored for the answer itself — it is read straight off the grid, so
+ * it fills in on its own as the grid gets solved.
+ */
+export interface Mystery {
+  /** The definition printed in the margin. */
+  clue: string
+  /**
+   * Squares feeding the answer, in order: `slots[0]` is letter 1. A null slot is
+   * a position whose square has not been pointed out yet.
+   */
+  slots: (string | null)[]
+}
+
 export interface Puzzle {
   id: string
   title: string
@@ -92,6 +110,8 @@ export interface Puzzle {
   updatedAt: number
   /** False until the user finishes the review step. */
   reviewed: boolean
+  /** Present when the grid comes with a mystery word. */
+  mystery?: Mystery
 }
 
 /** A player's state for one puzzle. Kept apart from the puzzle itself so a

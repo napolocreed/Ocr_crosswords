@@ -20,6 +20,8 @@ les grilles ne quittent jamais l'appareil. Déployable sur GitHub Pages.
   active rappelée en taille lisible.
 - **Mode brouillon** — jusqu'à 4 lettres candidates par case, affichées en petit et en gris
   quand on hésite.
+- **Mot mystère** — la définition en marge et les cases numérotées qui l'alimentent. La réponse
+  s'assemble toute seule à mesure que la grille se remplit, dans une barre sous la grille.
 - **Bibliothèque hors-ligne** — sauvegarde automatique, export/import de « packs » de grilles
   en un fichier JSON pour en emporter plusieurs d'un coup ou les passer sur un autre téléphone.
 
@@ -117,8 +119,8 @@ src/
     puzzle.ts           dérivation des mots depuis les flèches
     db.ts               IndexedDB (grilles légères / assets lourds séparés)
     exchange.ts         packs d'export / import
-  components/           GridView (zoom/pan), Keyboard, CropStage, Sheet
-  screens/              Library, Import, Review, Play, Settings
+  components/           GridView (zoom/pan), Keyboard, MysteryBar, CropStage, Sheet
+  screens/              Library, Import, Review (structure / définitions / mystère), Play, Settings
 ```
 
 `image.ts`, `gridGeometry.ts`, `gridDetect.ts` et `ocr.ts` ne touchent ni au DOM ni au canvas :
@@ -136,6 +138,9 @@ bombée, inclinée de quelques degrés, éclairage inégal, **sans recadrage man
 | Définitions lues correctement | **~80 %** (60 sur 75 non vides) |
 | Durée de l'import | ~30 s sur un mobile récent |
 
+Le mot mystère (définition en marge + cases numérotées) se saisit à la main, en une passe
+dédiée : voir les limites plus bas.
+
 Le recentrage des crops sur l'encre avant reconnaissance est ce qui compte le plus : il fait
 passer la lecture de ~24 % à ~80 %, parce qu'il rend l'OCR insensible à un cadrage de case
 décalé de quelques pour cent.
@@ -152,8 +157,12 @@ décalé de quelques pour cent.
   variante et se choisissent dans la relecture.
 - L'OCR d'un texte imprimé à 6 pt reste imparfait. La relecture n'est pas un rattrapage
   d'échec, c'est une étape assumée du flux.
-- Le **mot mystère** (définition en marge + cases numérotées) n'est pas modélisé ; ces cases
-  se remplissent comme les autres.
+- Les **cases numérotées du mot mystère se désignent à la main** (passe 3 de la relecture :
+  on tape les cases dans l'ordre). J'ai tenté de lire les petits chiffres automatiquement —
+  par composantes connexes, pour séparer un chiffre d'une pointe de flèche — et à cette
+  résolution le détecteur trouvait 11 pointes de flèches et zéro chiffre. Livrer une aide qui
+  désigne les mauvaises cases est pire que pas d'aide : elle a été retirée. Numéroter 10 cases
+  prend une quinzaine de secondes et le résultat est juste à coup sûr.
 
 ## Licence
 

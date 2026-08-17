@@ -827,3 +827,135 @@ textarea:focus {
   max-width: calc(100vw - 32px);
   text-align: center;
 }
+
+/* --------------------------------------------------------- mystery word */
+
+.cell .mystery-badge {
+  position: absolute;
+  top: 0;
+  left: 1px;
+  line-height: 1;
+  font-weight: 700;
+  color: var(--accent-dim);
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.cell.active .mystery-badge,
+.cell.in-word .mystery-badge {
+  color: #2a4a70;
+}
+
+.mystery-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px calc(var(--safe-right) + 12px) 6px calc(var(--safe-left) + 12px);
+  background: var(--bg-raised);
+  border-top: 1px solid var(--border);
+  text-align: left;
+  min-height: 42px;
+}
+
+.mystery-bar:active {
+  background: var(--bg-input);
+}
+
+.mystery-label {
+  flex: none;
+  color: var(--warn);
+  font-size: 15px;
+}
+
+.mystery-slots {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 3px;
+  /* Long answers scroll rather than shrinking the letters into illegibility. */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.mystery-slots::-webkit-scrollbar {
+  display: none;
+}
+
+.mystery-slot {
+  flex: none;
+  width: 22px;
+  height: 26px;
+  border-radius: 4px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-faint);
+}
+
+.mystery-slot.filled {
+  background: var(--cell-letter);
+  border-color: var(--cell-letter);
+  color: var(--cell-letter-text);
+}
+
+.mystery-hint {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--bg-input);
+  color: var(--text-dim);
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+}
+
+/* Long actions must not wrap onto three lines on a 390px phone. */
+.toolbar .btn {
+  padding: 0 12px;
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+.seg button {
+  white-space: nowrap;
+}
+
+/* Review: the tap-to-number pass. */
+.mystery-editor {
+  padding: 10px 12px 0;
+}
+
+.mystery-order {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.mystery-order-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.mystery-order-chip.empty {
+  border-style: dashed;
+  color: var(--text-faint);
+}
+
+.mystery-order-chip .n {
+  font-weight: 700;
+  color: var(--accent);
+}

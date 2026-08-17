@@ -15,8 +15,11 @@ import {
   emptyProgress,
   findOrphanCells,
   indexWords,
+  mysteryPositions,
   resizeGrid,
   setCellKind,
+  setMystery,
+  toggleMysterySlot,
   updateClue,
 } from '../lib/puzzle'
 import { GridView } from '../components/GridView'
@@ -32,7 +35,7 @@ import { getAssets } from '../lib/db'
  * the magazine.
  */
 
-type Pass = 'structure' | 'definitions'
+type Pass = 'structure' | 'definitions' | 'mystery'
 
 interface Props {
   puzzle: Puzzle
@@ -101,6 +104,8 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
     setPuzzle({ ...puzzle, rows, cols, cells, updatedAt: Date.now() })
   }
 
+  const positions = useMemo(() => mysteryPositions(puzzle), [puzzle])
+
   const structurePass = (
     <>
       <GridView
@@ -111,6 +116,7 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
         onSelectCell={cycleKind}
         onSelectClueCell={cycleKind}
         highlights={orphanKeys}
+        mysteryPositions={positions}
       />
       <div className="cluebar">
         <span className="text" style={{ fontSize: 13, fontWeight: 400 }}>
@@ -223,6 +229,85 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
     </div>
   )
 
+  /* --------------------------------------------------------------- mystery */
+
+  const mystery = puzzle.mystery
+  const assigned = mystery?.slots.filter(Boolean).length ?? 0
+
+  const mysteryPass = (
+    <>
+      <div className="mystery-editor">
+        <label className="field-label" htmlFor="mystery-clue">
+          Définition du mot mystère (imprimée en marge de la grille)
+        </label>
+        <input
+          id="mystery-clue"
+          value={mystery?.clue ?? ''}
+          placeholder="Ex. : Tropique, signe astrologique et coléoptère…"
+          onChange={(event) =>
+            setPuzzle(
+              setMystery(puzzle, {
+                clue: event.target.value,
+                slots: mystery?.slots ?? [],
+              }),
+            )
+          }
+        />
+        <p className="hint">
+          {assigned === 0
+            ? 'Touche ensuite les cases numérotées de la grille, dans l’ordre 1, 2, 3… Touche une case déjà numérotée pour la retirer.'
+            : `${assigned} case(s) numérotée(s). Touche une case pour l’ajouter à la suite, ou une case déjà numérotée pour la retirer.`}
+        </p>
+        {assigned > 0 && (
+          <div className="mystery-order">
+            {(mystery?.slots ?? []).map((key, i) => (
+              <span key={i} className={`mystery-order-chip ${key ? '' : 'empty'}`}>
+                <span className="n">{i + 1}</span>
+                {key ? `L${Number(key.split(',')[0]) + 1}·C${Number(key.split(',')[1]) + 1}` : '—'}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <GridView
+        puzzle={puzzle}
+        progress={emptyProgress(puzzle.id)}
+        activeCell={null}
+        activeWord={null}
+        onSelectCell={(r, c) => setPuzzle(toggleMysterySlot(puzzle, r, c))}
+        onSelectClueCell={() => {}}
+        mysteryPositions={positions}
+      />
+
+      <div className="toolbar">
+        <button
+          type="button"
+          className="btn"
+          disabled={assigned === 0}
+          onClick={() =>
+            setPuzzle(
+              setMystery(puzzle, {
+                clue: mystery?.clue ?? '',
+                slots: (mystery?.slots ?? []).slice(0, -1),
+              }),
+            )
+          }
+        >
+          ↩ Annuler
+        </button>
+        <button
+          type="button"
+          className="btn danger grow"
+          disabled={!mystery}
+          onClick={() => setPuzzle(setMystery(puzzle, undefined))}
+        >
+          Aucun mot mystère
+        </button>
+      </div>
+    </>
+  )
+
   return (
     <div className="app">
       <div className="topbar">
@@ -232,7 +317,11 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
         <h1>
           Relecture
           <span className="subtitle">
-            {pass === 'structure' ? 'forme de la grille' : `${flagged.length} à vérifier`}
+            {pass === 'structure'
+            ? 'forme de la grille'
+            : pass === 'definitions'
+              ? `${flagged.length} à vérifier`
+              : `${assigned} case(s) numérotée(s)`}
           </span>
         </h1>
         <button
@@ -261,10 +350,17 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
           >
             2. Définitions
           </button>
+          <button
+            type="button"
+            aria-pressed={pass === 'mystery'}
+            onClick={() => setPass('mystery')}
+          >
+            3. Mystère
+          </button>
         </div>
       </div>
 
-      {pass === 'structure' ? structurePass : definitionsPass}
+      {pass === 'structure' ? structurePass : pass === 'mystery' ? mysteryPass : definitionsPass}
 
       {zoomed && (
         <div

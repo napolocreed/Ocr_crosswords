@@ -28,6 +28,8 @@ interface Props {
   onSelectClueCell: (r: number, c: number) => void
   /** Extra squares to call out, e.g. unreachable ones during review. */
   highlights?: Set<string>
+  /** "r,c" → position in the mystery answer, shown as a small corner badge. */
+  mysteryPositions?: Map<string, number>
 }
 
 interface Transform {
@@ -44,6 +46,7 @@ export function GridView({
   onSelectCell,
   onSelectClueCell,
   highlights,
+  mysteryPositions,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const [transform, setTransform] = useState<Transform>({ zoom: 1, x: 0, y: 0 })
@@ -302,18 +305,28 @@ export function GridView({
                     ))}
                   </>
                 ) : cell.kind === 'letter' ? (
-                  letter ? (
+                  <>
+                    {mysteryPositions?.has(key) && (
+                      <span
+                        className="mystery-badge"
+                        style={{ fontSize: Math.max(5, BASE_CELL * 0.2) }}
+                      >
+                        {mysteryPositions.get(key)}
+                      </span>
+                    )}
+                    {letter ? (
                     letter
-                  ) : drafts && drafts.length > 0 ? (
-                    <span
-                      className="drafts"
-                      style={{ fontSize: Math.max(6, BASE_CELL * 0.26) }}
-                    >
-                      {drafts.slice(0, 4).map((candidate, k) => (
-                        <span key={`${candidate}-${k}`}>{candidate}</span>
-                      ))}
-                    </span>
-                  ) : null
+                    ) : drafts && drafts.length > 0 ? (
+                      <span
+                        className="drafts"
+                        style={{ fontSize: Math.max(6, BASE_CELL * 0.26) }}
+                      >
+                        {drafts.slice(0, 4).map((candidate, k) => (
+                          <span key={`${candidate}-${k}`}>{candidate}</span>
+                        ))}
+                      </span>
+                    ) : null}
+                  </>
                 ) : null}
               </div>
             )

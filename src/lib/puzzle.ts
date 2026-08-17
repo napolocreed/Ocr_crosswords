@@ -1,6 +1,7 @@
 import {
   type Cell,
   type Clue,
+  type Mystery,
   type Progress,
   type Puzzle,
   type Word,
@@ -191,4 +192,68 @@ export function emptyProgress(puzzleId: string): Progress {
 export function isComplete(puzzle: Puzzle, progress: Progress | undefined): boolean {
   const total = countAnswerCells(puzzle)
   return total > 0 && countFilled(puzzle, progress) === total
+}
+
+/* --------------------------------------------------------------- mystery word */
+
+/** Position (1-based) of each square that feeds the mystery answer. */
+export function mysteryPositions(puzzle: Puzzle): Map<string, number> {
+  const positions = new Map<string, number>()
+  puzzle.mystery?.slots.forEach((key, i) => {
+    if (key) positions.set(key, i + 1)
+  })
+  return positions
+}
+
+/**
+ * The mystery answer as it currently stands, one entry per position. Empty
+ * strings are letters still to be found, so the caller can render the gaps.
+ */
+export function readMysteryAnswer(
+  puzzle: Puzzle,
+  progress: Progress | undefined,
+): string[] {
+  const slots = puzzle.mystery?.slots ?? []
+  return slots.map((key) => (key ? (progress?.letters[key] ?? '') : ''))
+}
+
+export function mysteryIsComplete(puzzle: Puzzle, progress: Progress | undefined): boolean {
+  const answer = readMysteryAnswer(puzzle, progress)
+  return answer.length > 0 && answer.every(Boolean)
+}
+
+/** Adds a mystery word to a grid, or clears it. */
+export function setMystery(puzzle: Puzzle, mystery: Mystery | undefined): Puzzle {
+  const next = { ...puzzle, updatedAt: Date.now() }
+  if (mystery) next.mystery = mystery
+  else delete next.mystery
+  return next
+}
+
+/**
+ * Assigns a square to the mystery answer, or unassigns it.
+ *
+ * Tapping an unassigned square appends it to the next free position; tapping an
+ * assigned one removes it and closes the gap, so the numbering stays contiguous
+ * without the user having to renumber anything by hand.
+ */
+export function toggleMysterySlot(puzzle: Puzzle, r: number, c: number): Puzzle {
+  if (cellAt(puzzle, r, c)?.kind !== 'letter') return puzzle
+  const key = cellKey(r, c)
+  const current = puzzle.mystery ?? { clue: '', slots: [] }
+  const existing = current.slots.indexOf(key)
+  const slots =
+    existing >= 0
+      ? current.slots.filter((_, i) => i !== existing)
+      : [...current.slots, key]
+  return setMystery(puzzle, { ...current, slots })
+}
+
+/** Grows or shrinks the answer length, keeping the squares already pointed out. */
+export function resizeMystery(puzzle: Puzzle, length: number): Puzzle {
+  const current = puzzle.mystery ?? { clue: '', slots: [] }
+  const clamped = Math.max(0, Math.min(40, length))
+  const slots = current.slots.slice(0, clamped)
+  while (slots.length < clamped) slots.push(null)
+  return setMystery(puzzle, { ...current, slots })
 }

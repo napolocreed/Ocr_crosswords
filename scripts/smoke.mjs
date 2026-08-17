@@ -163,6 +163,29 @@ await check('definitions pass lists clues with crops', async () => {
 })
 await shot('5-review-definitions')
 
+console.log('\n5b. mystery word')
+await check('numbering squares builds the mystery answer', async () => {
+  await page.getByRole('button', { name: /3\. Mystère/ }).click()
+  await page.locator('#mystery-clue').fill('Tropique, signe astrologique et coléoptère')
+  // Tap three fillable squares, in order.
+  const fillable = page.locator('.grid .cell:not(.clue):not(.block)')
+  for (let i = 0; i < 3; i++) await fillable.nth(i + 2).click()
+  await page.waitForTimeout(200)
+  const chips = await page.locator('.mystery-order-chip').count()
+  if (chips !== 3) throw new Error(`expected 3 numbered squares, got ${chips}`)
+  // Badges must appear in the grid itself.
+  const badges = await page.locator('.cell .mystery-badge').count()
+  if (badges !== 3) throw new Error(`expected 3 badges in the grid, got ${badges}`)
+  console.log(`       3 squares numbered, ${badges} badges shown`)
+})
+await check('undo removes the last numbered square', async () => {
+  await page.getByRole('button', { name: /↩ Annuler/ }).click()
+  await page.waitForTimeout(150)
+  const chips = await page.locator('.mystery-order-chip').count()
+  if (chips !== 2) throw new Error(`expected 2 after undo, got ${chips}`)
+})
+await shot('5c-review-mystery')
+
 console.log('\n6. play')
 await check('saving the review opens the grid', async () => {
   await page.getByRole('button', { name: 'Enregistrer' }).click()
@@ -170,6 +193,17 @@ await check('saving the review opens the grid', async () => {
   await page.locator('.cluebar').waitFor({ timeout: 5000 })
 })
 await shot('6-play')
+
+await check('mystery bar shows the answer taking shape', async () => {
+  await page.locator('.mystery-bar').waitFor({ timeout: 5000 })
+  const slots = await page.locator('.mystery-bar .mystery-slot').count()
+  if (slots !== 2) throw new Error(`expected 2 mystery slots, got ${slots}`)
+  await page.locator('.mystery-bar').click()
+  await page.getByText(/Tropique, signe astrologique/).waitFor({ timeout: 5000 })
+  await page.locator('.sheet-backdrop').click({ position: { x: 5, y: 5 } })
+  await page.waitForTimeout(200)
+  console.log('       bar renders and opens the clue')
+})
 
 await check('typing letters fills squares', async () => {
   const before = await page.locator('.topbar .subtitle').first().innerText()
