@@ -18,6 +18,7 @@ import {
   mysteryPositions,
   resizeGrid,
   setCellKind,
+  setClueCount,
   setMystery,
   toggleMysterySlot,
   updateClue,
@@ -195,6 +196,21 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
                 {word ? ` · ${word.cells.length} lettres` : ' · ne mène nulle part'}
                 {clue.reviewed ? ' · vérifiée' : ''}
               </span>
+              {(() => {
+                const cell = cellAt(puzzle, r, c)
+                const count = cell?.clues?.length ?? 1
+                return (
+                  <button
+                    type="button"
+                    className="split-toggle"
+                    onClick={() => setPuzzle(setClueCount(puzzle, r, c, count === 2 ? 1 : 2))}
+                  >
+                    {count === 2
+                      ? '⇧ Cette case n’a qu’une définition'
+                      : '⇩ Cette case en contient deux'}
+                  </button>
+                )
+              })()}
               <input
                 value={clue.text}
                 placeholder="Définition"

@@ -1,4 +1,5 @@
 import {
+  type ArrowKind,
   type Cell,
   type Clue,
   type Mystery,
@@ -181,6 +182,40 @@ export function setCellKind(puzzle: Puzzle, r: number, c: number, kind: Cell['ki
     }
   } else {
     cells[i] = { kind }
+  }
+  return { ...puzzle, cells, updatedAt: Date.now() }
+}
+
+/**
+ * Changes how many definitions a square holds.
+ *
+ * The escape hatch for the pipeline's least reliable judgement. Detecting the
+ * hairline that separates two stacked definitions means finding a one-pixel rule
+ * in a photograph, and it will never be certain; when it is missed both
+ * definitions come back merged into one unreadable string, and when it is
+ * imagined a single definition is cut in half. Either way the fix is one tap,
+ * and the merged text is kept so it can be split by editing rather than retyped.
+ */
+export function setClueCount(puzzle: Puzzle, r: number, c: number, count: 1 | 2): Puzzle {
+  const index = r * puzzle.cols + c
+  const cell = puzzle.cells[index]
+  if (cell?.kind !== 'clue' || !cell.clues?.length) return puzzle
+  if (cell.clues.length === count) return puzzle
+
+  const cells = puzzle.cells.slice()
+  if (count === 2) {
+    const first = cell.clues[0]!
+    // The second answer must run the other way: two definitions in one square
+    // never feed the same direction.
+    const partner: ArrowKind = arrowDirection(first.arrow) === 'across' ? 'down' : 'right'
+    cells[index] = {
+      kind: 'clue',
+      clues: [first, { id: makeId('cl_'), text: '', arrow: partner, confidence: 0 }],
+    }
+  } else {
+    // Keep whichever half actually has text, preferring the first.
+    const kept = cell.clues.find((clue) => clue.text.trim()) ?? cell.clues[0]!
+    cells[index] = { kind: 'clue', clues: [kept] }
   }
   return { ...puzzle, cells, updatedAt: Date.now() }
 }

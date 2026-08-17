@@ -14,14 +14,15 @@ import { encodePng } from './png.mjs'
 import {
   toGray,
   downscaleGray,
+  grayToRgba,
   adaptiveThreshold,
   rotateRgba,
-  guessGridQuad,
   warpPerspectiveRgba,
   cropRgba,
   preprocessForOcr,
 } from '../src/lib/image.ts'
-import { detectGrid } from '../src/lib/gridDetect.ts'
+import { detectGrid, refineSplits } from '../src/lib/gridDetect.ts'
+import { suggestQuad } from '../src/lib/importPipeline.ts'
 import { OcrEngine, scoreClueText } from '../src/lib/ocr.ts'
 
 const args = process.argv.slice(2)
@@ -44,9 +45,14 @@ const decoded = jpeg.decode(readFileSync(file), { useTArray: true, formatAsRGBA:
 let rgba = { data: decoded.data, width: decoded.width, height: decoded.height }
 if (rotate) rgba = rotateRgba(rgba, rotate)
 
-const smallBin = adaptiveThreshold(downscaleGray(toGray(rgba), 900), 0.06, 0.12)
-const scaleToFull = rgba.width / smallBin.width
-const quad = guessGridQuad(smallBin).map((p) => ({ x: p.x * scaleToFull, y: p.y * scaleToFull }))
+// Exactly what the app does, including the 2400px decode cap: measuring a
+// different framing than the app uses makes every number meaningless.
+const capped =
+  Math.max(rgba.width, rgba.height) > 2400
+    ? grayToRgba(downscaleGray(toGray(rgba), 2400))
+    : rgba
+rgba = capped
+const quad = suggestQuad(rgba)
 
 const quadW = Math.hypot(quad[1].x - quad[0].x, quad[1].y - quad[0].y)
 const quadH = Math.hypot(quad[3].x - quad[0].x, quad[3].y - quad[0].y)
@@ -65,7 +71,8 @@ const ratio = big.w / small.w
 console.log(`detect at ${small.w}x${small.h}, crop from ${big.w}x${big.h} (x${ratio.toFixed(2)})`)
 
 const bin = adaptiveThreshold(toGray(small.img), 0.05, 0.12)
-const result = detectGrid(bin)
+const detected = detectGrid(bin)
+const result = refineSplits(toGray(big.img), detected, ratio)
 console.log(`grid: ${result.cols} x ${result.rows}, pitch ${result.pitchX.toFixed(0)}px`)
 
 const clues = result.cells.filter((c) => c.kind === 'clue' && c.r >= minRow && c.c >= minCol)
