@@ -8,6 +8,8 @@
  * and moving between answers — right under the thumb.
  */
 
+import { useLayoutEffect, useRef } from 'react'
+
 const ROWS = [
   ['A', 'Z', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
   ['Q', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', 'M'],
@@ -33,8 +35,35 @@ export function Keyboard({
   onPreviousWord,
   onNextWord,
 }: Props) {
+  const ref = useRef<HTMLDivElement>(null)
+
+  /*
+   * Publishes the band's height so anything floating over the screen can sit
+   * above it. Toasts are rendered at the top of the app, where they cannot know
+   * a keyboard exists — and pinned to the bottom of the viewport they landed on
+   * the last row of keys, covering the thing being used at the one moment the
+   * app had something to say.
+   */
+  useLayoutEffect(() => {
+    const element = ref.current
+    if (!element) return
+    const publish = () => {
+      document.documentElement.style.setProperty(
+        '--toast-bottom',
+        `${element.offsetHeight + 12}px`,
+      )
+    }
+    publish()
+    const observer = new ResizeObserver(publish)
+    observer.observe(element)
+    return () => {
+      observer.disconnect()
+      document.documentElement.style.removeProperty('--toast-bottom')
+    }
+  }, [])
+
   return (
-    <div className="keyboard" role="group" aria-label="Clavier de saisie">
+    <div className="keyboard" ref={ref} role="group" aria-label="Clavier de saisie">
       <div className="kb-row">
         <button
           type="button"

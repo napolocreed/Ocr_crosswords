@@ -157,11 +157,16 @@ console.log('\n5. review')
 await check('definitions pass lists clues with crops', async () => {
   await page.getByRole('button', { name: /2\. Définitions/ }).click()
   await page.locator('.review-row').first().waitFor({ timeout: 10000 })
+  // Read the whole list, not the queue. The screen opens on the definitions that
+  // want attention, and that queue is now short by design — measuring OCR quality
+  // through it would mean the better the reading, the fewer samples to judge it on.
+  await page.locator('.seg button', { hasText: 'Toutes' }).first().click()
+  await page.waitForTimeout(300)
   const rows = await page.locator('.review-row').count()
   if (rows === 0) throw new Error('no clue rows')
   const crops = await page.locator('.review-row img.crop').count()
   console.log(`       ${rows} rows, ${crops} with a crop image`)
-  const texts = await page.locator('.review-row input').evaluateAll((els) =>
+  const texts = await page.locator('.review-row textarea').evaluateAll((els) =>
     els.map((el) => el.value).filter(Boolean),
   )
   console.log(`       sample OCR: ${JSON.stringify(texts.slice(0, 8))}`)
@@ -184,19 +189,22 @@ await check('arrow assignment keeps every definition it is given', async () => {
   // regression.
   const label = await page.locator('.seg button', { hasText: 'Toutes' }).first().innerText()
   const total = Number(label.match(/\((\d+)\)/)?.[1] ?? 0)
-  const flagged = await page.locator('.review-row').count()
-  console.log(`       ${total} definitions, ${flagged} flagged for review`)
+  const queue = await page
+    .locator('.seg button', { hasText: 'À vérifier' })
+    .first()
+    .innerText()
+  console.log(`       ${total} definitions, queue says ${queue.trim()}`)
   // The page carries 71. Below 60 something structural has broken; the gap
   // between the two is the browser's own image decoding, which dilutes hairlines.
   if (total < 60) throw new Error(`only ${total} definitions — a regression`)
 })
 
 await check('bent arrows are read from the page', async () => {
+  // Read the arrow off each row's chip. The four-way picker is no longer on every
+  // row — it opens on demand — so counting pressed buttons now counts nothing.
   // Both bent labels read "... puis ...", so one selector covers them.
-  const bent = await page
-    .locator('.arrow-picker button[aria-pressed="true"][aria-label*="puis"]')
-    .count()
-  const total = await page.locator('.arrow-picker').count()
+  const bent = await page.locator('.arrow-chip[aria-label*="puis"]').count()
+  const total = await page.locator('.arrow-chip').count()
   console.log(`       ${bent} bent of ${total} definitions shown`)
   if (bent < 3) throw new Error(`expected several bent arrows, found ${bent}`)
 })

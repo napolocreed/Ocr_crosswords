@@ -33,7 +33,7 @@ import {
 import { detectGrid, refineSplits, trimUnusedEdges } from '../src/lib/gridDetect.ts'
 import { detectArrows } from '../src/lib/arrowDetect.ts'
 import { clueRegions, suggestQuad } from '../src/lib/importPipeline.ts'
-import { OcrEngine } from '../src/lib/ocr.ts'
+import { OcrEngine, scoreClueText, cleanClueText } from '../src/lib/ocr.ts'
 import { encodePng } from './png.mjs'
 
 const args = process.argv.slice(2)
@@ -144,10 +144,12 @@ for (const cell of clueCells) {
   for (const region of regions) {
     const crop = cropRgba(big.img, region.x0, region.y0, region.x1, region.y1)
     const prepared = preprocessForOcr(crop)
-    const { text } = await engine.recognize(
+    const { text, confidence } = await engine.recognize(
       encodePng(prepared.width, prepared.height, prepared.data),
     )
-    produced.push({ r: cell.r, c: cell.c, text })
+    // The app's own text score, so a review threshold can be chosen against the
+    // readings it will actually see rather than against Tesseract's raw number.
+    produced.push({ r: cell.r, c: cell.c, text, score: scoreClueText(text, confidence) })
   }
 }
 await engine.terminate()
@@ -243,6 +245,30 @@ if (args.includes('--detail')) {
   for (const m of remaining) console.log(`  "${m.text}"`)
   console.log(`\n--- spurious readings ---`)
   for (const s of spurious.slice(0, 40)) console.log(`  ${s.r},${s.c}  "${s.text}"`)
+}
+
+if (args.includes('--flags')) {
+  /*
+   * How well a text-score threshold separates the readings that are wrong from
+   * the ones that are right. The review flag exists to spend a reader's attention
+   * where it is needed, and a false alarm is not free — it is a row they read,
+   * compare and dismiss. So the number to choose is the one that catches the
+   * mistakes while raising as few alarms as possible, not a round-looking 0.75.
+   */
+  console.log(`\n=== REVIEW FLAG, by text-score threshold ===`)
+  console.log(`thresh  flagged  of which wrong  missed wrong  false alarms`)
+  const wrong = new Set(spurious.map((s) => s))
+  const isWrong = (item) => !item.matched
+  for (const t of [0.3, 0.4, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85]) {
+    const flagged = produced.filter((p) => (p.score ?? 0) < t)
+    const hit = flagged.filter(isWrong).length
+    const miss = produced.filter((p) => (p.score ?? 0) >= t && isWrong(p)).length
+    console.log(
+      `${t.toFixed(2)}    ${String(flagged.length).padStart(4)}     ${String(hit).padStart(6)}` +
+        `        ${String(miss).padStart(6)}       ${String(flagged.length - hit).padStart(6)}`,
+    )
+  }
+  console.log(`(${produced.filter(isWrong).length} readings are wrong in total, of ${produced.length})`)
 }
 
 console.log(`\n=== ARROWS ===`)

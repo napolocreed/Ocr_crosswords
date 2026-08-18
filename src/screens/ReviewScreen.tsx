@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   ARROW_GLYPH,
   ARROW_KINDS,
@@ -44,12 +44,62 @@ interface Props {
   onCancel: () => void
 }
 
+/**
+ * Arrow confidence below which the row shows that the arrow was deduced rather
+ * than read. A hint, not a flag: it colours the chip and nothing more.
+ */
+const ARROW_HINT_THRESHOLD = 0.6
+
+/**
+ * The definition field: a textarea that grows to its content rather than an input
+ * that hides it.
+ *
+ * This row exists so a reader can compare the reading against the picture beside
+ * it. A single-line field cut `BATTU SUR L'ÉCHIQUIER` off at `L'ÉCHIQU`, and text
+ * you have to scroll a field to see is text nobody checks — so the one element
+ * the screen is built around was the one element you could not read.
+ */
+function ClueField({
+  value,
+  onChange,
+  onDone,
+}: {
+  value: string
+  onChange: (text: string) => void
+  onDone: () => void
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null)
+  // `field-sizing: content` would do this in CSS, but Safari has not shipped it.
+  useLayoutEffect(() => {
+    const element = ref.current
+    if (!element) return
+    element.style.height = 'auto'
+    element.style.height = `${element.scrollHeight}px`
+  }, [value])
+  return (
+    <textarea
+      ref={ref}
+      rows={1}
+      value={value}
+      placeholder="Définition non lue"
+      autoCapitalize="characters"
+      autoCorrect="off"
+      spellCheck={false}
+      onChange={(event) => onChange(event.target.value)}
+      onBlur={onDone}
+    />
+  )
+}
+
 export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
   const [puzzle, setPuzzle] = useState(initial)
   const [pass, setPass] = useState<Pass>('structure')
   const [assets, setAssets] = useState<PuzzleAssets | null>(null)
   const [onlyFlagged, setOnlyFlagged] = useState(true)
   const [zoomed, setZoomed] = useState<string | null>(null)
+  /** Which row has its arrow picker open. Only one at a time: four buttons on
+   *  every row is a wall, and the arrow is right far more often than not. */
+  const [openArrow, setOpenArrow] = useState<string | null>(null)
 
   useEffect(() => {
     void getAssets(initial.id).then((found) => setAssets(found ?? null))
@@ -82,6 +132,28 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
     }
     return map
   }, [clues, index])
+
+  /*
+   * A deduced arrow is worth showing but not worth stopping for.
+   *
+   * It used to be: the arrow's confidence was folded into the clue's, so a square
+   * whose arrow had to be inferred from geometry — routine — put a perfectly read
+   * definition in the queue. That is where most of the queue came from.
+   *
+   * Leaving it out is safe because an arrow that is actually wrong shows itself
+   * some other way: it points at a square nothing can reach, and orphans are
+   * flagged on their own and drawn in red in the structure pass. A merely
+   * uncertain arrow is not evidence of a mistake, and the crop beside it now
+   * reaches far enough past the square to show the printed glyph, so confirming
+   * one is a glance rather than a task.
+   */
+  const deduced = useMemo(() => {
+    const set = new Set<string>()
+    for (const { clue } of clues) {
+      if (!clue.reviewed && (clue.arrowConfidence ?? 1) < ARROW_HINT_THRESHOLD) set.add(clue.id)
+    }
+    return set
+  }, [clues])
 
   const flagged = useMemo(
     () => clues.filter(({ clue }) => !clue.reviewed && concernOf.has(clue.id)),
@@ -190,13 +262,42 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
         </div>
       )}
 
+      {visibleClues.length > 0 && (
+        /* Most of this list is right, and reading a row to agree with it is still
+           reading it. One tap accepts everything on screen; anything wrong is
+           still correctable here, or later from the grid itself. */
+        <button
+          type="button"
+          className="btn wide accept-all"
+          onClick={() =>
+            setPuzzle(
+              visibleClues.reduce(
+                (next, { clue }) => updateClue(next, clue.id, { reviewed: true }),
+                puzzle,
+              ),
+            )
+          }
+        >
+          ✓ Tout valider ({visibleClues.filter(({ clue }) => !clue.reviewed).length})
+        </button>
+      )}
+
       {visibleClues.map(({ r, c, clue }) => {
         // Older imports filed crops by coordinate; fall back so they still show.
         const crop = assets?.crops[clue.id] ?? assets?.crops[cellKey(r, c)]
         const concern = concernOf.get(clue.id)
         const word = index.byId.get(clue.id)
+        const count = cellAt(puzzle, r, c)?.clues?.length ?? 1
+        const open = openArrow === clue.id
         return (
-          <div key={clue.id} className={`review-row ${concern && !clue.reviewed ? 'flagged' : ''}`}>
+          <div
+            key={clue.id}
+            className={
+              'review-row' +
+              (concern && !clue.reviewed ? ' flagged' : '') +
+              (clue.reviewed ? ' done' : '')
+            }
+          >
             {crop ? (
               <img
                 className="crop"
@@ -205,59 +306,71 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
                 onClick={() => setZoomed(crop)}
               />
             ) : (
-              <div className="crop" style={{ height: 60, background: 'var(--bg-input)' }} />
+              <div className="crop crop-missing" />
             )}
             <div className="fields">
-              <span className="position">
-                L{r + 1} · C{c + 1}
-                {word
-                  ? ` · ${word.cells.length} lettre${word.cells.length > 1 ? 's' : ''}`
-                  : ' · ne mène nulle part'}
-                {clue.reviewed ? ' · vérifiée' : ''}
-              </span>
-              {concern && !clue.reviewed && <span className="concern">⚠ {concern}</span>}
-              {(() => {
-                const cell = cellAt(puzzle, r, c)
-                const count = cell?.clues?.length ?? 1
-                return (
+              {/* The definition is the subject, so it comes first and largest. */}
+              <ClueField
+                value={clue.text}
+                onChange={(text) => setPuzzle(updateClue(puzzle, clue.id, { text }))}
+                onDone={() => setPuzzle(updateClue(puzzle, clue.id, { reviewed: true }))}
+              />
+              <div className="row-meta">
+                {/* The arrow is one tap to confirm and two to change, rather than
+                    four permanent buttons on every row. */}
+                <button
+                  type="button"
+                  className={`arrow-chip${deduced.has(clue.id) ? ' guessed' : ''}`}
+                  aria-expanded={open}
+                  aria-label={`Flèche : ${ARROW_LABEL[clue.arrow]}`}
+                  onClick={() => setOpenArrow(open ? null : clue.id)}
+                >
+                  {ARROW_GLYPH[clue.arrow]}
+                </button>
+                <span className="position">
+                  L{r + 1}·C{c + 1}
+                  {word ? ` · ${word.cells.length} lettre${word.cells.length > 1 ? 's' : ''}` : ''}
+                </span>
+                {concern && !clue.reviewed && <span className="concern">{concern}</span>}
+                <span className="spacer" />
+                <button
+                  type="button"
+                  className="tick"
+                  aria-pressed={clue.reviewed === true}
+                  aria-label={clue.reviewed ? 'Vérifiée' : 'Marquer comme vérifiée'}
+                  onClick={() =>
+                    setPuzzle(updateClue(puzzle, clue.id, { reviewed: !clue.reviewed }))
+                  }
+                >
+                  ✓
+                </button>
+              </div>
+              {open && (
+                <div className="arrow-picker">
+                  {ARROW_KINDS.map((arrow) => (
+                    <button
+                      key={arrow}
+                      type="button"
+                      aria-pressed={clue.arrow === arrow}
+                      title={ARROW_LABEL[arrow]}
+                      aria-label={ARROW_LABEL[arrow]}
+                      onClick={() => {
+                        setPuzzle(updateClue(puzzle, clue.id, { arrow, reviewed: true }))
+                        setOpenArrow(null)
+                      }}
+                    >
+                      {ARROW_GLYPH[arrow]}
+                    </button>
+                  ))}
                   <button
                     type="button"
                     className="split-toggle"
                     onClick={() => setPuzzle(setClueCount(puzzle, r, c, count === 2 ? 1 : 2))}
                   >
-                    {count === 2
-                      ? '⇧ Cette case n’a qu’une définition'
-                      : '⇩ Cette case en contient deux'}
+                    {count === 2 ? 'Une seule définition ici' : 'Deux définitions ici'}
                   </button>
-                )
-              })()}
-              <input
-                value={clue.text}
-                placeholder="Définition"
-                autoCapitalize="characters"
-                autoCorrect="off"
-                spellCheck={false}
-                onChange={(event) =>
-                  setPuzzle(updateClue(puzzle, clue.id, { text: event.target.value }))
-                }
-                onBlur={() => setPuzzle(updateClue(puzzle, clue.id, { reviewed: true }))}
-              />
-              <div className="arrow-picker">
-                {ARROW_KINDS.map((arrow) => (
-                  <button
-                    key={arrow}
-                    type="button"
-                    aria-pressed={clue.arrow === arrow}
-                    title={ARROW_LABEL[arrow]}
-                    aria-label={ARROW_LABEL[arrow]}
-                    onClick={() =>
-                      setPuzzle(updateClue(puzzle, clue.id, { arrow, reviewed: true }))
-                    }
-                  >
-                    {ARROW_GLYPH[arrow]}
-                  </button>
-                ))}
-              </div>
+                </div>
+              )}
             </div>
           </div>
         )
@@ -356,7 +469,10 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
             {pass === 'structure'
             ? 'forme de la grille'
             : pass === 'definitions'
-              ? `${flagged.length} à vérifier`
+              ? // Progress, not a repeat of the filter's own count: the reader
+                // wants to know how much is left, and the tab already says how
+                // many are flagged.
+                `${clues.filter(({ clue }) => clue.reviewed).length} / ${clues.length} vérifiées`
               : `${assigned} case(s) numérotée(s)`}
           </span>
         </h1>

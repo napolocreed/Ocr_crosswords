@@ -53,6 +53,16 @@ const DETECT_DIM = 1400
 /** Resolution the OCR crops are taken from: the more pixels the better. */
 const CROP_DIM = 2600
 
+/**
+ * How far past its own square the review crop reaches, as a fraction of a cell.
+ *
+ * Enough to show the arrow whole. The glyph straddles the square's border, so a
+ * third of a cell brings in the head and the bend on whichever side it leaves
+ * from, without pulling in so much of the neighbours that the definition itself
+ * stops being the subject of the picture.
+ */
+const REVIEW_CROP_MARGIN = 0.34
+
 export interface StructureAnalysis {
   detection: DetectionResult
   /** The straightened image the crops come from. */
@@ -280,7 +290,7 @@ export function buildPuzzleFromDetection(
       id: makeId('cl_'),
       text: '',
       arrow,
-      confidence,
+      arrowConfidence: confidence,
     }))
     return { kind: 'clue', clues }
   })
@@ -372,23 +382,38 @@ export async function readDefinitions(
     const target = cells[index]
     if (target?.kind !== 'clue' || !target.clues) continue
 
-    // Whole-cell crop for the review screen, filed under every definition the
-    // square carries so the pairing survives later structural edits.
-    const whole = cropRgba(
-      cropSource,
-      detected.x0 * cropScale,
-      detected.y0 * cropScale,
-      detected.x1 * cropScale,
-      detected.y1 * cropScale,
-    )
-    const wholeUrl = await toDataUrl(whole, 360)
-    for (const clue of target.clues) crops[clue.id] = wholeUrl
+    /*
+     * Each definition gets its own picture, widened past the square it sits in.
+     *
+     * Widened, because the arrow is not inside the square: a magazine prints it
+     * straddling the border, half in the definition and half in the answer's
+     * first letter. A crop cut exactly on the rules shows the text and hides the
+     * one mark that says where the answer goes — which is precisely what the
+     * reviewer is being asked to confirm.
+     *
+     * Its own, because a stacked square holds two definitions and used to hand
+     * both rows the same picture of both of them. The reader then had to work out
+     * which half the row meant before they could check anything, on every row of
+     * the queue. Cropping to the definition's own region also brings its own
+     * arrow with it, since the two are printed at the same height.
+     */
+    const margin = Math.min(detection.pitchX, detection.pitchY) * REVIEW_CROP_MARGIN * cropScale
 
     const regions = clueRegions(cropGray, detected, target.clues.length, cropScale)
     const clues: Clue[] = []
     for (let i = 0; i < target.clues.length; i++) {
       const existing = target.clues[i]!
       const region = regions[Math.min(i, regions.length - 1)]!
+      crops[existing.id] = await toDataUrl(
+        cropRgba(
+          cropSource,
+          region.x0 - margin,
+          region.y0 - margin,
+          region.x1 + margin,
+          region.y1 + margin,
+        ),
+        420,
+      )
       const crop = cropRgba(cropSource, region.x0, region.y0, region.x1, region.y1)
       const prepared = preprocessForOcr(crop)
       const blob = await toBlob(prepared, 0.95)
@@ -405,7 +430,10 @@ export async function readDefinitions(
       clues.push({
         ...existing,
         text,
-        confidence: Math.min(existing.confidence ?? 1, scoreClueText(text, confidence)),
+        // The text's own score, not folded together with the arrow's: a guessed
+        // arrow is a separate question, and mixing them buried the definitions
+        // that genuinely needed a second look under the ones that did not.
+        confidence: scoreClueText(text, confidence),
       })
       onProgress?.({ done, total: clueCells.length, lastText: text })
     }

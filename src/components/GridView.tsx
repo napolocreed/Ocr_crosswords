@@ -11,6 +11,14 @@ import type { Word } from '../lib/puzzle'
  * pinch-zoom inside a scroller fights the fixed keyboard band below.
  */
 
+/**
+ * Smallest type, in physical pixels, that is worth drawing at all.
+ *
+ * Below this a definition is texture, not text — and texture in every shaded
+ * square is what made the fitted grid look grubby.
+ */
+const LEGIBLE_PX = 6.5
+
 /** Cell size in CSS pixels at zoom 1. Everything else scales from this. */
 const BASE_CELL = 44
 
@@ -227,6 +235,19 @@ export function GridView({
   const fontSize = Math.max(7, BASE_CELL * 0.52)
   const clueFontSize = Math.max(4.5, BASE_CELL * 0.15)
 
+  /*
+   * Definition text is drawn only when it can actually be read.
+   *
+   * Fitted to a phone, a 13-column grid puts a definition at about four physical
+   * pixels — far past the point where it says anything, and it does real harm
+   * there: every shaded square fills with grey mush, so the grid reads as dirty
+   * rather than as a structure. What the fitted view is *for* is the shape of the
+   * puzzle — which squares are definitions, where their arrows point — and that
+   * survives at any size. The words themselves are already on the clue bar, and
+   * a pinch brings them back.
+   */
+  const clueTextReadable = clueFontSize * transform.zoom >= LEGIBLE_PX
+
   return (
     <div
       className="grid-wrap"
@@ -289,11 +310,12 @@ export function GridView({
               >
                 {cell.kind === 'clue' ? (
                   <>
-                    {(cell.clues ?? []).map((clue) => (
-                      <span key={clue.id} className="clue-text clue-half">
-                        {clue.text || '—'}
-                      </span>
-                    ))}
+                    {clueTextReadable &&
+                      (cell.clues ?? []).map((clue) => (
+                        <span key={clue.id} className="clue-text clue-half">
+                          {clue.text || '—'}
+                        </span>
+                      ))}
                     {(cell.clues ?? []).map((clue) => (
                       <span
                         key={`arrow-${clue.id}`}

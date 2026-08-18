@@ -78,8 +78,14 @@ await page.waitForTimeout(800)
 // Show every definition, not just the flagged ones.
 await page.locator('.seg button', { hasText: 'Toutes' }).first().click().catch(() => {})
 await page.waitForTimeout(600)
-const texts = await page.locator('.review-row input').evaluateAll((els) => els.map((e) => e.value))
-console.log(`review  ${texts.length} definitions`)
+const rows = await page.locator('.review-row').evaluateAll((els) =>
+  els.map((el) => ({
+    text: el.querySelector('textarea')?.value ?? '',
+    flagged: el.classList.contains('flagged'),
+  })),
+)
+const texts = rows.map((r) => r.text)
+console.log(`review  ${texts.length} definitions, ${rows.filter((r) => r.flagged).length} flagged`)
 await page.screenshot({ path: '.debug/probe-review.png', fullPage: false })
 
 const truthPath = photo.replace(/\.[^.]+$/, '.truth.json')
@@ -90,6 +96,32 @@ if (existsSync(truthPath)) {
   const missing = truth.definitions.filter((d) => !got.includes(norm(d)))
   console.log(`truth   ${truth.definitions.length} definitions, ${missing.length} not read exactly`)
   for (const m of missing) console.log(`  missing: ${m}`)
+
+  /*
+   * How well the review flag predicts a reading that is actually wrong.
+   *
+   * The flag exists to spend the reader's attention where it is needed. A false
+   * alarm is not free — it is a row they read, compare and dismiss — and the
+   * complaint that "90% of the flagged ones are fine" is a statement about this
+   * table, so it is the table to tune against rather than the threshold.
+   */
+  const wanted = truth.definitions.map(norm)
+  const pool = wanted.slice()
+  const judged = rows.map((r) => {
+    const key = norm(r.text)
+    const at = pool.indexOf(key)
+    if (key && at >= 0) {
+      pool.splice(at, 1)
+      return { ...r, right: true }
+    }
+    return { ...r, right: false }
+  })
+  const count = (f, ok) => judged.filter((j) => j.flagged === f && j.right === ok).length
+  console.log(
+    `flags   raised ${count(true, false)} on wrong, ${count(true, true)} on right ` +
+      `(false alarms) | silent on ${count(false, false)} wrong, ${count(false, true)} right`,
+  )
+  await writeFile('.debug/probe-rows.json', JSON.stringify(judged, null, 2))
 }
 await writeFile('.debug/probe-definitions.json', JSON.stringify(texts, null, 2))
 await browser.close()

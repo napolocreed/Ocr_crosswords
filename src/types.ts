@@ -71,10 +71,18 @@ export interface Clue {
   text: string
   arrow: ArrowKind
   /**
-   * 0–1 confidence from the import pipeline: how sure we are about the arrow
-   * and the text. Anything below REVIEW_THRESHOLD is surfaced first for review.
+   * 0–1 confidence in the *text*, from the import pipeline.
+   *
+   * Kept apart from {@link arrowConfidence} on purpose. These were one number
+   * once, the smaller of the two, and that made the review flag nearly useless:
+   * an arrow that had to be guessed from geometry — routine, and something the
+   * reader settles at a glance — dragged a perfectly read definition below the
+   * threshold. Measured against two hand-transcribed pages, 24 of 27 and 17 of 23
+   * flagged rows were flagged over nothing.
    */
   confidence?: number
+  /** 0–1 confidence in the arrow, which is a separate question from the text. */
+  arrowConfidence?: number
   /** True once a human has looked at this clue in the review screen. */
   reviewed?: boolean
 }
@@ -173,7 +181,22 @@ export interface Word {
   cells: { r: number; c: number }[]
 }
 
-export const REVIEW_THRESHOLD = 0.75
+/**
+ * Text score below which a definition is put in front of the reader.
+ *
+ * Chosen from the measured trade-off rather than picked round. Swept over three
+ * hand-transcribed pages, on the one that actually contains mistakes the score
+ * separates well only at the bottom of its range: at 0.30 it raises three alarms
+ * and all three are real, at 0.40 five alarms for four real, and by 0.50 eleven
+ * alarms for the same four. It was 0.75, which cost sixteen alarms to catch six.
+ *
+ * The number is low because a false alarm is not free — it is a row read,
+ * compared and dismissed — and because the errors it misses are the recoverable
+ * kind: a misread definition is still visible while solving and can be fixed
+ * then. The errors that are *not* recoverable are structural, and those are
+ * flagged on their own evidence rather than on this score.
+ */
+export const REVIEW_THRESHOLD = 0.45
 
 export function cellKey(r: number, c: number): string {
   return `${r},${c}`
