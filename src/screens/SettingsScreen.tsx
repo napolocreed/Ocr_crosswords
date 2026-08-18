@@ -124,6 +124,11 @@ export function SettingsScreen({ onBack, onToast }: Props) {
             Tout se passe sur ton téléphone : les photos, la reconnaissance et tes grilles ne
             quittent jamais l’appareil. Aucun compte, aucun serveur.
           </p>
+          {/* An offline app can sit a version behind without looking like it, so
+              the build has to be readable from the phone itself. */}
+          <p className="muted" data-role="build" style={{ margin: '8px 0 0', fontSize: 12 }}>
+            Version {__BUILD_ID__}
+          </p>
         </div>
       </div>
     </div>

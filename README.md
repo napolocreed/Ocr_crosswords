@@ -165,6 +165,37 @@ node --experimental-strip-types --import ./scripts/register-ts.mjs \
 `dev-geom.mjs` sert de garde-fou : une modification de géométrie qui améliore
 l'alignement mais perd des cases-définitions n'est pas une amélioration.
 
+### Vérifier qu'une mise à jour arrive vraiment
+
+Une app à service worker peut servir le code d'hier indéfiniment, et la panne est
+invisible : la page s'affiche, ce n'est simplement pas celle qui a été déployée.
+Raisonner sur la configuration de workbox ne tranche pas — le comportement dépend
+du moment où le navigateur va vérifier. Donc on mesure :
+
+```bash
+node scripts/dev-update.mjs
+```
+
+Il sert un build A, le charge comme le ferait un visiteur qui a déjà l'app,
+remplace le dossier par un build B — un déploiement qui atterrit pendant que
+l'app est ouverte — et compte les rechargements avant que le nouveau code tourne.
+Il vérifie les **deux** chemins : recharger, et le chemin qu'une app installée
+emprunte réellement, où l'on ne recharge jamais mais où l'on met en arrière-plan
+et rouvre.
+
+```bash
+node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/dev-guard.mjs
+```
+
+Et celui-ci vérifie le garde-fou : une mise à jour ne doit pas recharger une
+relecture dont les corrections ne sont pas encore enregistrées. Un garde-fou
+seulement présent est pire que pas de garde-fou, puisqu'il se lit comme une
+protection.
+
+La version qui tourne est affichée dans **Réglages → À propos**, parce qu'une app
+hors-ligne peut avoir une version de retard sans que ça se voie — et sans ça, un
+rapport de bug et le code ne peuvent pas être mis en face l'un de l'autre.
+
 ## Architecture
 
 ```

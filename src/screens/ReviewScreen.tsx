@@ -25,6 +25,7 @@ import {
 } from '../lib/puzzle'
 import { GridView } from '../components/GridView'
 import { getAssets } from '../lib/db'
+import { holdReload } from '../lib/updateGuard'
 
 /**
  * The correction step, in two passes.
@@ -113,6 +114,18 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
   useEffect(() => {
     void getAssets(initial.id).then((found) => setAssets(found ?? null))
   }, [initial.id])
+
+  /*
+   * Hold off a version update while there are corrections that have not been
+   * saved. Everything else in the app is written to IndexedDB as it is typed, so
+   * this screen is the only place where a reload could throw work away — and a
+   * new version arriving is not worth a lost review.
+   */
+  const dirty = puzzle !== initial
+  useEffect(() => {
+    if (!dirty) return
+    return holdReload()
+  }, [dirty])
 
   const words = useMemo(() => buildWords(puzzle), [puzzle])
   const index = useMemo(() => indexWords(words), [words])
