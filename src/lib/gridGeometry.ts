@@ -363,6 +363,27 @@ export function detectBoundaries(
     return { curves: [], pitch: chain.pitch, hits: chain.hits, tilt }
   }
 
+  /*
+   * Offer one more line at each end, if the image has room for it.
+   *
+   * A chain drops the misses that ended it, so where a grid's outermost rule is
+   * too faint to be seen the chain stops one line short — and a whole row or
+   * column of the puzzle goes with it. Measured on two of the test pages: both
+   * find 13 columns of which one is margin, so the grid comes out 12 wide against
+   * a printed 13, and the definitions in that column are simply absent.
+   *
+   * Guessing is safe here only because guessing is no longer the last word.
+   * `trimUnusedEdges` drops a border row or column that is not printed, judged
+   * against the grid's own frame agreement, and it is decisive: real edges score
+   * 0.68 to 0.84 of their page's median and margin 0.00 to 0.32. So an extension
+   * that is real survives on its own evidence and one that is not is peeled
+   * again, which is a better trade than losing a column outright.
+   */
+  const lead = chain.lines[0]! - chain.pitch
+  const tail = chain.lines[chain.lines.length - 1]! + chain.pitch
+  if (lead > 0) chain.lines.unshift(lead)
+  if (tail < acrossExtent - 1) chain.lines.push(tail)
+
   const search = chain.pitch * 0.35
   const curves = chain.lines.map((seed) => {
     const positions = new Array<number>(BANDS).fill(seed)

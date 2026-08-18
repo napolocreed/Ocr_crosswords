@@ -12,7 +12,7 @@
  */
 import { readFileSync, existsSync } from 'node:fs'
 import jpeg from 'jpeg-js'
-import { toGray, downscaleGray, grayToRgba, adaptiveThreshold, warpPerspectiveRgba } from '../src/lib/image.ts'
+import { toGray, downscaleGray, grayToRgba, adaptiveThreshold, warpPerspectiveRgba, rotateRgba } from '../src/lib/image.ts'
 import { detectGrid, refineSplits, trimUnusedEdges } from '../src/lib/gridDetect.ts'
 import { detectArrows } from '../src/lib/arrowDetect.ts'
 import { suggestQuad } from '../src/lib/importPipeline.ts'
@@ -21,8 +21,15 @@ const files = process.argv.slice(2).filter((a) => !a.startsWith('--'))
 if (!files.length) files.push('fixtures/fleches-niveau2-p43.jpg')
 
 for (const file of files) {
+  const truthPathEarly = file.replace(/\.[^.]+$/, '.truth.json')
+  const rotate = existsSync(truthPathEarly)
+    ? (JSON.parse(readFileSync(truthPathEarly, 'utf8')).rotate ?? 0)
+    : 0
   const decoded = jpeg.decode(readFileSync(file), { useTArray: true, formatAsRGBA: true })
   let photo = { data: decoded.data, width: decoded.width, height: decoded.height }
+  // Some fixtures are photographed sideways; the app is told which way up by the
+  // user, so the harness has to be told too or it measures a different problem.
+  if (rotate) photo = rotateRgba(photo, rotate)
   if (Math.max(photo.width, photo.height) > 2400) photo = grayToRgba(downscaleGray(toGray(photo), 2400))
   const quad = suggestQuad(photo)
   const qw = Math.hypot(quad[1].x - quad[0].x, quad[1].y - quad[0].y)

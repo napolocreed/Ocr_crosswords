@@ -1108,6 +1108,25 @@ export function trimUnusedEdges(
   const used = (kind: 'row' | 'col', index: number) => {
     const cells = lineCells(kind, index)
     if (cells.length === 0) return false
+
+    /*
+     * A line carrying several definition squares is grid, and no further test may
+     * overrule that. This is not a heuristic: a cell is only ever classified as a
+     * definition if it passed the per-cell frame gate, so a line with two of them
+     * has already proved twice over that it is printed. Peeling it throws away
+     * definitions that were read successfully — six of them on the second test
+     * page, from a row that scored 0.694 against a bar of 0.700 — and the user
+     * cannot correct text that was never extracted.
+     *
+     * The line average this protects against is not a good enough instrument on
+     * its own. A grid's outermost row is mostly empty squares, whose frames the
+     * page's own curl and the binding's shadow degrade first, so the average is
+     * dragged down by exactly the cells that carry no information while the
+     * definition squares beside them are crisp.
+     */
+    const clues = cells.filter((cell) => cell.kind === 'clue').length
+    if (clues >= 2) return true
+
     const frame = cells.reduce((total, cell) => total + cell.frameScore, 0) / cells.length
     if (frame < framedEnough) return false
     for (const cell of cells) {
