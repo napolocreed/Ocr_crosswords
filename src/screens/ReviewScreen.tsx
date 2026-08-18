@@ -63,10 +63,12 @@ function ClueField({
   value,
   onChange,
   onDone,
+  onCaret,
 }: {
   value: string
   onChange: (text: string) => void
   onDone: () => void
+  onCaret?: (at: number) => void
 }) {
   const ref = useRef<HTMLTextAreaElement>(null)
   // `field-sizing: content` would do this in CSS, but Safari has not shipped it.
@@ -86,6 +88,7 @@ function ClueField({
       autoCorrect="off"
       spellCheck={false}
       onChange={(event) => onChange(event.target.value)}
+      onSelect={(event) => onCaret?.(event.currentTarget.selectionStart ?? 0)}
       onBlur={onDone}
     />
   )
@@ -100,6 +103,12 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
   /** Which row has its arrow picker open. Only one at a time: four buttons on
    *  every row is a wall, and the arrow is right far more often than not. */
   const [openArrow, setOpenArrow] = useState<string | null>(null)
+  /**
+   * Where the caret last sat, and in which definition. A ref rather than state so
+   * that moving it does not re-render sixty rows; tagged with the clue it came
+   * from so a cut cannot use a position left behind in another one.
+   */
+  const caret = useRef<{ id: string; at: number } | null>(null)
 
   useEffect(() => {
     void getAssets(initial.id).then((found) => setAssets(found ?? null))
@@ -314,6 +323,7 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
                 value={clue.text}
                 onChange={(text) => setPuzzle(updateClue(puzzle, clue.id, { text }))}
                 onDone={() => setPuzzle(updateClue(puzzle, clue.id, { reviewed: true }))}
+                onCaret={(at) => (caret.current = { id: clue.id, at })}
               />
               <div className="row-meta">
                 {/* The arrow is one tap to confirm and two to change, rather than
@@ -362,14 +372,37 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
                       {ARROW_GLYPH[arrow]}
                     </button>
                   ))}
-                  <button
-                    type="button"
-                    className="split-toggle"
-                    onClick={() => setPuzzle(setClueCount(puzzle, r, c, count === 2 ? 1 : 2))}
-                  >
-                    {count === 2 ? 'Une seule définition ici' : 'Deux définitions ici'}
-                  </button>
                 </div>
+              )}
+              {/* Out where it can be seen. A missed hairline is the one error the
+                  reader cannot work around by editing, so the way out of it must
+                  not be behind another control. */}
+              {count === 2 ? (
+                <button
+                  type="button"
+                  className="split-toggle"
+                  onClick={() => setPuzzle(setClueCount(puzzle, r, c, 1))}
+                >
+                  ⇧ Réunir : c’est une seule définition
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="split-toggle"
+                  onClick={() => {
+                    // Cut where the reader put the caret, when they put it
+                    // somewhere useful; otherwise split and let them type the
+                    // second half. Either way the first half keeps its text.
+                    const mark = caret.current
+                    const at =
+                      mark && mark.id === clue.id && mark.at > 0 && mark.at < clue.text.length
+                        ? mark.at
+                        : undefined
+                    setPuzzle(setClueCount(puzzle, r, c, 2, at))
+                  }}
+                >
+                  ⇩ Couper en deux au curseur
+                </button>
               )}
             </div>
           </div>

@@ -199,6 +199,41 @@ await check('arrow assignment keeps every definition it is given', async () => {
   if (total < 60) throw new Error(`only ${total} definitions — a regression`)
 })
 
+await check('a merged reading can be cut back into two definitions', async () => {
+  /*
+   * The one error a reader cannot edit their way out of. Where the hairline
+   * between two stacked definitions is missed, the square comes back as a single
+   * clue holding both texts run together — and until this existed, the second
+   * one had to be retyped from the magazine, which is the one thing this screen
+   * is for avoiding.
+   */
+  const before = await page.locator('.review-row').count()
+  const row = page.locator('.review-row').filter({ hasText: 'Couper en deux' }).first()
+  const field = row.locator('textarea')
+  const text = await field.inputValue()
+  const at = Math.floor(text.length / 2)
+  // Put the caret where the cut should fall, exactly as a reader would.
+  await field.evaluate((el, pos) => {
+    el.focus()
+    el.setSelectionRange(pos, pos)
+    el.dispatchEvent(new Event('select', { bubbles: true }))
+  }, at)
+  await row.getByRole('button', { name: /Couper en deux/ }).click()
+  await page.waitForTimeout(400)
+
+  const after = await page.locator('.review-row').count()
+  if (after !== before + 1) throw new Error(`expected one more row, got ${before} -> ${after}`)
+  const halves = await page
+    .locator('.review-row textarea')
+    .evaluateAll((els) => els.map((el) => el.value))
+  const joined = halves.filter((v) => v).join(' ')
+  const squash = (v) => v.replace(/\s+/g, '')
+  if (!squash(joined).includes(squash(text))) {
+    throw new Error('the split lost text: neither half carries what was there')
+  }
+  console.log(`       "${text.slice(0, 28)}…" cut at ${at}, ${before} -> ${after} rows`)
+})
+
 await check('bent arrows are read from the page', async () => {
   // Read the arrow off each row's chip. The four-way picker is no longer on every
   // row — it opens on demand — so counting pressed buttons now counts nothing.

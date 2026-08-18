@@ -192,11 +192,21 @@ export function setCellKind(puzzle: Puzzle, r: number, c: number, kind: Cell['ki
  * The escape hatch for the pipeline's least reliable judgement. Detecting the
  * hairline that separates two stacked definitions means finding a one-pixel rule
  * in a photograph, and it will never be certain; when it is missed both
- * definitions come back merged into one unreadable string, and when it is
- * imagined a single definition is cut in half. Either way the fix is one tap,
- * and the merged text is kept so it can be split by editing rather than retyped.
+ * definitions come back merged into one string, and when it is imagined a single
+ * definition is cut in half. Either way the fix has to be possible by hand, and
+ * neither direction may lose text: splitting divides what is there, joining puts
+ * it back together.
+ *
+ * @param cut where to divide the existing text when splitting in two. Omit to
+ *   leave it all on the first definition.
  */
-export function setClueCount(puzzle: Puzzle, r: number, c: number, count: 1 | 2): Puzzle {
+export function setClueCount(
+  puzzle: Puzzle,
+  r: number,
+  c: number,
+  count: 1 | 2,
+  cut?: number,
+): Puzzle {
   const index = r * puzzle.cols + c
   const cell = puzzle.cells[index]
   if (cell?.kind !== 'clue' || !cell.clues?.length) return puzzle
@@ -208,14 +218,30 @@ export function setClueCount(puzzle: Puzzle, r: number, c: number, count: 1 | 2)
     // The second answer must run the other way: two definitions in one square
     // never feed the same direction.
     const partner: ArrowKind = arrowDirection(first.arrow) === 'across' ? 'down' : 'right'
+    /*
+     * Where the hairline was missed, the square was read as one definition and
+     * its text is the two run together. Splitting has to divide that text, not
+     * just make room beside it: a reader who can see `BATTU SUR L'ÉCHIQUIER ÇA
+     * REMPLIT LE VERRE` in one field and knows it is two clues had, until now, no
+     * way of saying so — the second half would have to be retyped from the
+     * magazine, which is the one thing this screen exists to avoid.
+     */
+    const at = cut ?? first.text.length
+    const head = first.text.slice(0, at).trim()
+    const tail = first.text.slice(at).trim()
     cells[index] = {
       kind: 'clue',
-      clues: [first, { id: makeId('cl_'), text: '', arrow: partner, confidence: 0 }],
+      clues: [
+        { ...first, text: head, reviewed: false },
+        { id: makeId('cl_'), text: tail, arrow: partner, confidence: 0, reviewed: false },
+      ],
     }
   } else {
-    // Keep whichever half actually has text, preferring the first.
-    const kept = cell.clues.find((clue) => clue.text.trim()) ?? cell.clues[0]!
-    cells[index] = { kind: 'clue', clues: [kept] }
+    // Joining puts the two texts back together rather than discarding one: a
+    // split made by mistake should be undoable without retyping anything.
+    const parts = cell.clues.map((clue) => clue.text.trim()).filter(Boolean)
+    const kept = cell.clues[0]!
+    cells[index] = { kind: 'clue', clues: [{ ...kept, text: parts.join(' ') }] }
   }
   return { ...puzzle, cells, updatedAt: Date.now() }
 }

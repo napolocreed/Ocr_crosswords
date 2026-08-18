@@ -56,12 +56,13 @@ const CROP_DIM = 2600
 /**
  * How far past its own square the review crop reaches, as a fraction of a cell.
  *
- * Enough to show the arrow whole. The glyph straddles the square's border, so a
- * third of a cell brings in the head and the bend on whichever side it leaves
- * from, without pulling in so much of the neighbours that the definition itself
- * stops being the subject of the picture.
+ * Enough to show the arrow whole, which takes more than it sounds: the glyph is
+ * not drawn on the border but *inside the neighbouring letter square*, clear of
+ * the rule. A crop that stopped at the rule showed none of it, and a third of a
+ * cell showed the tail with the head cut off. Half a cell reaches the head
+ * without turning the neighbour into the subject of the picture.
  */
-const REVIEW_CROP_MARGIN = 0.34
+const REVIEW_CROP_MARGIN = 0.5
 
 export interface StructureAnalysis {
   detection: DetectionResult
@@ -200,16 +201,28 @@ function chooseArrows(
   evidence: ArrowEvidence[] | undefined,
 ): { arrows: ArrowKind[]; confidence: number } {
   if (evidence && evidence.length > 0) {
-    const kinds = evidence.map((item) => item.kind)
-    const weakest = Math.min(...evidence.map((item) => item.confidence))
+    // Evidence arrives in printed order, top of the square first, which is the
+    // order the definitions are in. For a square holding one definition that
+    // ordering says nothing useful, so the strongest reading wins instead: extra
+    // glyphs there are spurious, not a second answer.
+    const ordered =
+      clueCount === 1
+        ? [...evidence].sort((a, b) => b.confidence - a.confidence)
+        : evidence
+    const kinds = ordered.map((item) => item.kind)
+    const weakest = Math.min(...ordered.slice(0, clueCount).map((item) => item.confidence))
     if (kinds.length >= clueCount) {
       return { arrows: kinds.slice(0, clueCount), confidence: weakest }
     }
     // One glyph read but two definitions stacked. The list must still come back
     // at full length: a missing entry would drop a definition from the puzzle
     // altogether, so it would never be read, shown or correctable.
+    // Where the one glyph sits decides which definition keeps it: a glyph drawn
+    // past the square's bottom edge belongs to the lower half, so the guess goes
+    // in front of it rather than after.
+    const belongsLast = (ordered[0]?.offset ?? 0) >= 1
     return {
-      arrows: padArrows(kinds, clueCount, cell, kindAt),
+      arrows: padArrows(kinds, clueCount, cell, kindAt, belongsLast),
       confidence: Math.min(weakest, 0.4),
     }
   }
@@ -240,6 +253,7 @@ function padArrows(
   count: number,
   cell: DetectedCell,
   kindAt: (r: number, c: number) => Cell['kind'] | undefined,
+  readGlyphIsLast = false,
 ): ArrowKind[] {
   const out = [...kinds]
   const used = new Set(kinds)
@@ -263,6 +277,11 @@ function padArrows(
   }
   // Still short only if every kind is taken, which cannot happen for count <= 4.
   while (out.length < count) out.push('right')
+  // The glyph that was actually read keeps its own half; the guesses fill in
+  // around it rather than pushing it out of place.
+  if (readGlyphIsLast && kinds.length > 0 && out.length > kinds.length) {
+    return [...out.slice(kinds.length), ...kinds]
+  }
   return out
 }
 
@@ -385,11 +404,10 @@ export async function readDefinitions(
     /*
      * Each definition gets its own picture, widened past the square it sits in.
      *
-     * Widened, because the arrow is not inside the square: a magazine prints it
-     * straddling the border, half in the definition and half in the answer's
-     * first letter. A crop cut exactly on the rules shows the text and hides the
-     * one mark that says where the answer goes — which is precisely what the
-     * reviewer is being asked to confirm.
+     * Widened, because the arrow is not in the square at all: a magazine draws it
+     * inside the answer's first letter square, past the rule. A crop cut on the
+     * rules shows the text and none of the one mark that says where the answer
+     * goes — which is precisely what the reviewer is being asked to confirm.
      *
      * Its own, because a stacked square holds two definitions and used to hand
      * both rows the same picture of both of them. The reader then had to work out

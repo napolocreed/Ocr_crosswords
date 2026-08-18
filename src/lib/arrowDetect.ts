@@ -33,6 +33,16 @@ export interface ArrowEvidence {
   kind: ArrowKind
   /** 0–1: how cleanly the glyph matched. */
   confidence: number
+  /**
+   * Where the glyph sits along its definition square: 0 at that square's top
+   * edge, 1 at its bottom, and above 1 when the glyph is drawn below the square
+   * altogether.
+   *
+   * This is what pairs an arrow with the right definition in a stacked square.
+   * The square carries two, printed one beside each half, and the only thing that
+   * says which is which is where each one is drawn.
+   */
+  offset: number
 }
 
 /** A compact glyph floating clear of every border: a mystery-word index. */
@@ -260,11 +270,16 @@ export function detectArrows(
       const axisRatio = Math.max(spanX, spanY) / Math.max(0.01, Math.min(spanX, spanY))
       const axisConfidence = Math.min(1, 0.4 + 0.3 * Math.min(2, axisRatio - 1))
 
+      // Measured against the owning square, not the cell the glyph lives in: an
+      // arrow drawn to the right shares its owner's rows, while one drawn below
+      // starts past the owner's bottom edge and so sorts after it.
+      const centreY = (blob.minY + blob.maxY + 1) / 2 / height
       arrows.push({
         clue: fromLeft ? { r: cell.r, c: cell.c - 1 } : { r: cell.r - 1, c: cell.c },
         start: { r: cell.r, c: cell.c },
         kind,
         confidence: Math.max(0, Math.min(1, ownerConfidence * axisConfidence)),
+        offset: fromLeft ? centreY : 1 + centreY,
       })
     }
   }
@@ -315,8 +330,18 @@ export function groupArrowsByClue(arrows: ArrowEvidence[]): Map<string, ArrowEvi
     }
     list.push(arrow)
   }
-  // Strongest reading first, so a caller taking one arrow takes the best.
-  for (const list of byClue.values()) list.sort((a, b) => b.confidence - a.confidence)
+  /*
+   * Ordered the way the definitions are: top of the square first.
+   *
+   * This used to sort by confidence, on the reasoning that a caller taking one
+   * arrow should take the best one. But the caller takes them *in order* and
+   * hands them to the definitions in order, so on a stacked square the two
+   * arrows were paired with the two halves by strength — which is to say at
+   * random. Roughly half of those squares came out with their arrows swapped,
+   * sending both answers to the wrong place. Picking the best of several for a
+   * single definition is now done where that choice belongs, in `chooseArrows`.
+   */
+  for (const list of byClue.values()) list.sort((a, b) => a.offset - b.offset)
   return byClue
 }
 

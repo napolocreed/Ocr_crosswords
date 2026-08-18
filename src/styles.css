@@ -803,11 +803,11 @@ textarea:focus {
   color: var(--accent-text);
 }
 
-.arrow-picker .split-toggle {
-  flex-basis: 100%;
-  font-size: 13px;
+.review-row .split-toggle {
+  align-self: flex-start;
+  font-size: 12px;
   color: var(--text-dim);
-  height: 34px;
+  padding: 4px 0;
 }
 
 .seg {
