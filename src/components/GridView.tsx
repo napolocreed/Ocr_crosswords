@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ARROW_GLYPH, type ArrowKind, type Progress, type Puzzle, cellKey } from '../types'
+import { type Progress, type Puzzle, arrowStartOffset, cellKey } from '../types'
 import type { Word } from '../lib/puzzle'
+import { GridArrow, entersFromLeft } from './GridArrow'
+import { fitClueSize, shortenClue } from '../lib/clueTypography'
 
 /**
  * The grid, pan- and pinch-zoomable.
@@ -14,17 +16,45 @@ import type { Word } from '../lib/puzzle'
 /**
  * Smallest type, in physical pixels, that is worth drawing at all.
  *
- * Below this a definition is texture, not text — and texture in every shaded
- * square is what made the fitted grid look grubby.
+ * Below this a definition is texture, not text. Rather than blank the square
+ * when its definition will not fit — which left the fitted grid with no text in
+ * it anywhere — the definition is set at exactly this size and cut short. Only
+ * when even a few characters will not fit does the square go empty.
  */
 const LEGIBLE_PX = 6.5
+
+/**
+ * How far below the floor a shortened definition may go to keep a whole word.
+ *
+ * A square only wide enough for RIVI… is wide enough for RIVIÈRE… one step of
+ * type smaller, and the whole word is worth much more than the step.
+ */
+const SHORTENED_FLOOR = 0.84
 
 /** Cell size in CSS pixels at zoom 1. Everything else scales from this. */
 const BASE_CELL = 44
 
-/** Which edge of the clue square the arrow is drawn on. */
-function arrowLeavesRight(arrow: ArrowKind): boolean {
-  return arrow === 'right' || arrow === 'rightDown'
+/** Padding inside a definition square, matching `.cell.clue` in styles.css. */
+const CLUE_PAD_X = 1
+const CLUE_PAD_Y = 1
+/** Rule, margin and padding between two definitions stacked in one square. */
+const CLUE_DIVIDER = 3
+
+/** Largest a very short definition is allowed to grow to. */
+const CLUE_MAX = BASE_CELL * 0.34
+
+const clueBox = (stacked: boolean) => ({
+  w: BASE_CELL - 2 * CLUE_PAD_X,
+  h: stacked
+    ? (BASE_CELL - 2 * CLUE_PAD_Y - CLUE_DIVIDER) / 2
+    : BASE_CELL - 2 * CLUE_PAD_Y,
+})
+
+/** An arrow to draw in a letter square, put there by a neighbouring definition. */
+interface Mark {
+  id: string
+  arrow: Parameters<typeof entersFromLeft>[0]
+  lane: number
 }
 
 interface Props {
@@ -183,9 +213,59 @@ export function GridView({
     )
   }
 
+  /*
+   * Zoom shortcuts, because pinching is not a good way to read.
+   *
+   * Fitted to a phone the definitions are at the edge of legibility however they
+   * are set, so getting in close is not an occasional thing — it is most of
+   * playing. A double tap and a button both toggle between the whole grid and a
+   * comfortable reading zoom, anchored where the tap landed so the square you
+   * were looking at stays under your thumb.
+   */
+  const comfortZoom = useMemo(() => Math.min(3, Math.max(minZoom * 1.35, 1.2)), [minZoom])
+  const isFitted = transform.zoom <= minZoom * 1.05
+
+  const zoomTo = useCallback(
+    (zoom: number, anchor?: { x: number; y: number }) => {
+      setTransform((current) => {
+        const anchorX = anchor?.x ?? viewport.w / 2
+        const anchorY = anchor?.y ?? viewport.h / 2
+        const scale = zoom / current.zoom
+        return clamp({
+          zoom,
+          x: anchorX - (anchorX - current.x) * scale,
+          y: anchorY - (anchorY - current.y) * scale,
+        })
+      })
+    },
+    [clamp, viewport],
+  )
+
+  const toggleZoom = useCallback(
+    (anchor?: { x: number; y: number }) => zoomTo(isFitted ? comfortZoom : minZoom, anchor),
+    [zoomTo, isFitted, comfortZoom, minZoom],
+  )
+
+  const lastTap = useRef<{ at: number; x: number; y: number } | null>(null)
+
   const onPointerUp = (event: React.PointerEvent) => {
+    const dragged = gesture.current?.moved === true
+    const alone = pointers.current.size === 1
     pointers.current.delete(event.pointerId)
     if (pointers.current.size === 0) gesture.current = null
+
+    if (dragged || !alone) return
+    const rect = wrapRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const point = { x: event.clientX - rect.left, y: event.clientY - rect.top }
+    const previous = lastTap.current
+    const at = Date.now()
+    if (previous && at - previous.at < 320 && Math.hypot(point.x - previous.x, point.y - previous.y) < 28) {
+      lastTap.current = null
+      toggleZoom(point)
+      return
+    }
+    lastTap.current = { at, ...point }
   }
 
   const wasDrag = () => gesture.current?.moved === true
@@ -233,20 +313,94 @@ export function GridView({
   }, [activeWord])
 
   const fontSize = Math.max(7, BASE_CELL * 0.52)
-  const clueFontSize = Math.max(4.5, BASE_CELL * 0.15)
 
   /*
-   * Definition text is drawn only when it can actually be read.
+   * Every arrow, filed under the square it belongs in rather than the square it
+   * came from — which is the neighbouring letter square the answer starts in.
    *
-   * Fitted to a phone, a 13-column grid puts a definition at about four physical
-   * pixels — far past the point where it says anything, and it does real harm
-   * there: every shaded square fills with grey mush, so the grid reads as dirty
-   * rather than as a structure. What the fitted view is *for* is the shape of the
-   * puzzle — which squares are definitions, where their arrows point — and that
-   * survives at any size. The words themselves are already on the clue bar, and
-   * a pinch brings them back.
+   * Two definitions stacked in one square can send their arrows through the same
+   * border into the same neighbour, and then they have to be pushed apart or
+   * they land on top of each other. Only arrows actually sharing a border are
+   * moved: two definitions pointing different ways go to different squares, or
+   * through different borders of the same square, and each should sit in the
+   * middle of its own. So the lanes are worked out per border, after the arrows
+   * have been filed, rather than from the definition's position in its square.
+   *
+   * An arrow whose answer starts nowhere — off the grid, or in a square that is
+   * not a letter — has no square to be drawn in. Those stay in the definition,
+   * marked, because an arrow silently vanishing would hide a misread one.
    */
-  const clueTextReadable = clueFontSize * transform.zoom >= LEGIBLE_PX
+  const { marks, orphans } = useMemo(() => {
+    const marks = new Map<string, Mark[]>()
+    const orphans = new Map<string, Mark[]>()
+    for (let i = 0; i < puzzle.cells.length; i += 1) {
+      const cell = puzzle.cells[i]
+      if (!cell || cell.kind !== 'clue') continue
+      const r = Math.floor(i / puzzle.cols)
+      const c = i % puzzle.cols
+      for (const clue of cell.clues ?? []) {
+        const { dr, dc } = arrowStartOffset(clue.arrow)
+        const tr = r + dr
+        const tc = c + dc
+        const target =
+          tr < puzzle.rows && tc < puzzle.cols ? puzzle.cells[tr * puzzle.cols + tc] : undefined
+        const lands = target?.kind === 'letter'
+        const into = lands ? marks : orphans
+        const key = lands ? cellKey(tr, tc) : cellKey(r, c)
+        const mark: Mark = { id: clue.id, arrow: clue.arrow, lane: 0.5 }
+        const list = into.get(key)
+        if (list) list.push(mark)
+        else into.set(key, [mark])
+      }
+    }
+    for (const list of [...marks.values(), ...orphans.values()]) {
+      if (list.length < 2) continue
+      for (const side of [true, false]) {
+        const sharing = list.filter((mark) => entersFromLeft(mark.arrow) === side)
+        if (sharing.length < 2) continue
+        sharing.forEach((mark, k) => {
+          mark.lane = (k + 1) / (sharing.length + 1)
+        })
+      }
+    }
+    return { marks, orphans }
+  }, [puzzle])
+
+  /*
+   * The size each definition gets, measured against its own box once per puzzle.
+   *
+   * A single size for all of them has to be small enough for the longest, which
+   * left every short definition set several points below what its square could
+   * have carried — and, fitted to a phone, below what anyone could read.
+   */
+  const clueSizes = useMemo(() => {
+    const sizes = new Map<string, number>()
+    for (const cell of puzzle.cells) {
+      if (cell.kind !== 'clue') continue
+      const clues = cell.clues ?? []
+      const box = clueBox(clues.length > 1)
+      // A stacked half is capped below the full-square maximum too, so the two
+      // definitions in one square are never set at wildly different sizes.
+      const max = Math.min(CLUE_MAX, box.h * 0.62)
+      for (const clue of clues) sizes.set(clue.id, fitClueSize(clue.text, box.w, box.h, 3, max))
+    }
+    return sizes
+  }, [puzzle])
+
+  /*
+   * The size a shortened definition is set at, rounded to a step.
+   *
+   * Shortening measures text, and it happens while the grid is being rendered.
+   * Taken straight from the zoom this would be a different number on every
+   * frame of a pinch, so nothing would ever come out of the measurement cache
+   * and every definition on the page would be re-measured sixty times a second.
+   * Across a zoom sweep that costs a dropped frame — 38 ms at worst against
+   * 19 ms rounded, on a desktop, so several times that on a phone. Rounding up
+   * to a step keeps the type above the legibility floor, gives the cache
+   * something to hold on to, and stops the text reflowing continuously under
+   * the fingers as well. scripts/dev-grid.mjs measures it.
+   */
+  const floorSize = Math.ceil((LEGIBLE_PX / transform.zoom) * 4) / 4
 
   return (
     <div
@@ -301,7 +455,7 @@ export function GridView({
                 style={{
                   width: BASE_CELL,
                   height: BASE_CELL,
-                  fontSize: cell.kind === 'clue' ? clueFontSize : fontSize,
+                  fontSize,
                   ...(highlights?.has(key)
                     ? { boxShadow: 'inset 0 0 0 2px var(--danger)' }
                     : null),
@@ -310,24 +464,47 @@ export function GridView({
               >
                 {cell.kind === 'clue' ? (
                   <>
-                    {clueTextReadable &&
-                      (cell.clues ?? []).map((clue) => (
-                        <span key={clue.id} className="clue-text clue-half">
-                          {clue.text || '—'}
+                    {(cell.clues ?? []).map((clue) => {
+                      const box = clueBox((cell.clues ?? []).length > 1)
+                      let size = clueSizes.get(clue.id) ?? 4
+                      let text: string | null = clue.text.trim()
+                      if (!text) {
+                        size = Math.min(CLUE_MAX, box.h * 0.6)
+                        text = '—'
+                      } else if (size * transform.zoom < LEGIBLE_PX) {
+                        // Too small to read whole: set it at the legibility floor
+                        // and cut it short, rather than showing nothing at all.
+                        const short = shortenClue(
+                          clue.text,
+                          box.w,
+                          box.h,
+                          floorSize,
+                          floorSize * SHORTENED_FLOOR,
+                        )
+                        text = short?.text ?? null
+                        size = short?.size ?? size
+                      }
+                      return text === null ? null : (
+                        <span key={clue.id} className="clue-text clue-half" style={{ fontSize: size }}>
+                          {text}
                         </span>
-                      ))}
-                    {(cell.clues ?? []).map((clue) => (
-                      <span
-                        key={`arrow-${clue.id}`}
-                        className={`arrow ${arrowLeavesRight(clue.arrow) ? 'right' : 'down'}`}
-                        style={{ fontSize: Math.max(6, BASE_CELL * 0.2) }}
-                      >
-                        {ARROW_GLYPH[clue.arrow]}
-                      </span>
+                      )
+                    })}
+                    {(orphans.get(key) ?? []).map((mark) => (
+                      <GridArrow
+                        key={mark.id}
+                        arrow={mark.arrow}
+                        cell={BASE_CELL}
+                        lane={mark.lane}
+                        orphan
+                      />
                     ))}
                   </>
                 ) : cell.kind === 'letter' ? (
                   <>
+                    {(marks.get(key) ?? []).map((mark) => (
+                      <GridArrow key={mark.id} arrow={mark.arrow} cell={BASE_CELL} lane={mark.lane} />
+                    ))}
                     {mysteryPositions?.has(key) && (
                       <span
                         className="mystery-badge"
@@ -355,6 +532,19 @@ export function GridView({
           })}
         </div>
       </div>
+      <button
+        type="button"
+        className="grid-zoom"
+        // The grid itself listens on pointer events, so the button has to keep
+        // its own out of the pan/tap machinery.
+        onPointerDown={(event) => event.stopPropagation()}
+        onPointerMove={(event) => event.stopPropagation()}
+        onPointerUp={(event) => event.stopPropagation()}
+        onClick={() => toggleZoom()}
+        aria-label={isFitted ? 'Agrandir pour lire les définitions' : 'Voir toute la grille'}
+      >
+        {isFitted ? '⊕' : '⊖'}
+      </button>
     </div>
   )
 }

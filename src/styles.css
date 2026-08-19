@@ -32,6 +32,9 @@
   --cell-active: #ffd66b;
   --cell-word: #a8d1ff;
   --cell-rule: #6b7689;
+  /* Arrows are struck into the letter squares, under the letters, so they read
+     clearly against every square colour without competing with the writing. */
+  --cell-arrow: #495468;
   --draft: #7c8798;
 
   --radius: 12px;
@@ -467,7 +470,9 @@ textarea:focus {
   color: var(--cell-clue-text);
   align-content: start;
   justify-items: stretch;
-  padding: 1px 2px;
+  /* Kept in step with CLUE_PAD_X / CLUE_PAD_Y in GridView.tsx, which measures
+     definitions against the space this leaves. */
+  padding: 1px;
 }
 
 .cell.in-word {
@@ -485,37 +490,65 @@ textarea:focus {
 
 .cell .clue-text {
   font-weight: 600;
-  line-height: 1.02;
+  /* clueTypography.ts measures against this exact figure. */
+  line-height: 1.06;
   text-align: left;
   letter-spacing: -0.02em;
   overflow: hidden;
   word-break: break-word;
-  hyphens: auto;
+  /* Room for the accents on capitals. French definitions are set in capitals
+     and full of É È Ô Î; at a 1.06 line the accents on the first line are cut
+     off by the square's own clipping, turning RIVIÈRE into RIVIERE. Padding
+     rather than a taller line so only the first line pays for it.
+     clueTypography.ts allows for this. */
+  padding-top: 0.12em;
 }
 
 .cell .clue-half + .clue-half {
   border-top: 1px solid var(--cell-rule);
-  margin-top: 1px;
-  padding-top: 1px;
+  margin-top: 2px;
 }
 
-.cell .arrow {
+/*
+ * The arrow of a definition, drawn in the letter square the answer starts in —
+ * see GridArrow.tsx. It sits under the letter the player writes, as it does on
+ * paper, so it is inked more lightly than the letters are.
+ */
+.cell .grid-arrow {
   position: absolute;
-  color: #1b2230;
-  line-height: 1;
+  overflow: visible;
+  stroke: var(--cell-arrow);
+  fill: var(--cell-arrow);
   pointer-events: none;
 }
 
-.cell .arrow.right {
-  right: 0;
-  top: 50%;
-  transform: translate(35%, -50%);
+/* An arrow pointing at no square at all: it is wrong, and worth noticing. */
+.cell .grid-arrow.orphan {
+  stroke: var(--danger);
+  fill: var(--danger);
 }
 
-.cell .arrow.down {
-  bottom: 0;
-  left: 50%;
-  transform: translate(-50%, 35%);
+.grid-zoom {
+  position: absolute;
+  right: calc(var(--safe-right) + 10px);
+  bottom: 10px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  /* It floats over the grid, so it stays translucent: the squares underneath
+     are still part of the puzzle. */
+  background: rgb(18 21 28 / 78%);
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgb(0 0 0 / 45%);
+}
+
+.grid-zoom:active {
+  background: var(--bg-input);
 }
 
 .cell .drafts {

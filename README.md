@@ -196,6 +196,31 @@ La version qui tourne est affichée dans **Réglages → À propos**, parce qu'u
 hors-ligne peut avoir une version de retard sans que ça se voie — et sans ça, un
 rapport de bug et le code ne peuvent pas être mis en face l'un de l'autre.
 
+### Vérifier que la grille se lit
+
+```bash
+npm run build && node scripts/dev-grid.mjs
+```
+
+Tout ce que la grille doit réussir — des définitions assez petites pour tenir et
+assez grandes pour être lues, des flèches dans la case où la réponse commence,
+deux définitions empilées dans une case, une flèche qui ne pointe nulle part —
+est une question de pixels, et la seule façon honnête d'y répondre est de
+regarder. Le script construit une grille contenant tous ces cas, l'importe par
+le lecteur de paquets de l'app, et photographie l'écran de jeu à trois niveaux
+de zoom dans `.debug/grid-*.png`.
+
+Il chiffre aussi trois choses qui se dégradent en silence :
+
+- **combien de définitions sont réellement affichées** à chaque zoom. Avant, la
+  grille dézoomée n'en affichait aucune ;
+- **où sont les flèches** : toutes dans des cases à remplir, sauf celles qui ne
+  pointent vers aucune case, gardées dans la définition et signalées ;
+- **la fluidité du zoom**, parce que raccourcir une définition demande de mesurer
+  du texte pendant le rendu. Sans arrondi, un balayage de zoom coûte une image
+  perdue (38 ms au pire contre 19 ms) sur une machine de bureau, donc bien plus
+  sur un téléphone.
+
 ## Architecture
 
 ```
