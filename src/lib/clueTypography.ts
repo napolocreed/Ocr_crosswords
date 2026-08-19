@@ -26,10 +26,27 @@ const LINE_HEIGHT = 1.06
  * And its `padding-top`, which keeps the accents on the first line's capitals
  * from being clipped away by the square.
  */
-const ACCENT_ROOM = 0.12
+const ACCENT_ROOM = 0.34
 
-/** Canvas metrics run a little narrow against real layout. Give the box some slack. */
+/**
+ * Slack on the box WIDTH only.
+ *
+ * Canvas metrics and CSS line-breaking agree closely but not exactly, and where
+ * a line breaks is decided by width. Height needs none: a line box is exactly
+ * `line-height x font-size`, so the height arithmetic here is the browser's own.
+ * It used to be applied to both, and on a stacked half — barely two lines tall
+ * to begin with — six per cent of the height is most of a line.
+ */
 const SAFETY = 0.94
+
+/**
+ * Matches `letter-spacing` on `.cell .clue-text`.
+ *
+ * `measureText` ignores the property unless the context is told, so without this
+ * every line was measured about three per cent wider than it renders, on top of
+ * SAFETY — and lines that would have fitted were broken or cut.
+ */
+const LETTER_SPACING = '-0.02em'
 
 /** Below this a shortened definition says nothing at all, so nothing is drawn. */
 const MIN_USEFUL_CHARS = 3
@@ -50,6 +67,12 @@ function context(): CanvasRenderingContext2D | null {
 
 const font = (size: number) => FONT.replace('$', String(size))
 
+/** Setting `font` resets letter spacing, so the two always go together. */
+function useFont(ctx: CanvasRenderingContext2D, size: number) {
+  ctx.font = font(size)
+  ctx.letterSpacing = LETTER_SPACING
+}
+
 /**
  * Lines a greedy wrap needs for `text` at `size` in a box `width` wide.
  *
@@ -62,7 +85,7 @@ function lineCount(
   size: number,
   width: number,
 ): number {
-  ctx.font = font(size)
+  useFont(ctx, size)
   const words = text.split(/\s+/).filter(Boolean)
   if (words.length === 0) return 0
   let lines = 1
@@ -116,7 +139,7 @@ function fitsIn(
  * RIVIÈRE / DE / FRANCE: smaller type, and far quicker to read.
  */
 function unbrokenSize(ctx: CanvasRenderingContext2D, text: string, width: number): number {
-  ctx.font = font(100)
+  useFont(ctx, 100)
   let widest = 0
   for (const word of text.split(/\s+/)) {
     if (word) widest = Math.max(widest, ctx.measureText(word).width)
@@ -148,7 +171,7 @@ export function fitClueSize(
   let size = min
   if (ctx && text.trim()) {
     const boxW = width * SAFETY
-    const boxH = height * SAFETY
+    const boxH = height
     const unbroken = unbrokenSize(ctx, text, boxW)
     const ceiling = unbroken >= min ? Math.min(max, unbroken) : max
     if (fitsIn(ctx, text, ceiling, boxW, boxH)) {
@@ -163,7 +186,10 @@ export function fitClueSize(
         if (fitsIn(ctx, text, mid, boxW, boxH)) lo = mid
         else hi = mid
       }
-      size = lo
+      // The bisection only ever moves `lo` up from `min`, so `min` itself is
+      // never tested. If even that does not fit, say so with 0 rather than
+      // handing back a size that would silently overflow the square.
+      size = fitsIn(ctx, text, lo, boxW, boxH) ? lo : 0
     }
   }
   if (fittedCache.size > 6000) fittedCache.clear()
@@ -240,7 +266,7 @@ function measureShortened(
   const ctx = context()
   if (!ctx) return { text, whole: true }
   const boxW = width * SAFETY
-  const boxH = height * SAFETY
+  const boxH = height
   const lines = Math.floor((boxH - size * ACCENT_ROOM) / (size * LINE_HEIGHT))
   if (lines < 1) return null
 
@@ -258,13 +284,22 @@ function measureShortened(
     }
   }
 
-  // Not even the first word fits the width, so cut inside it.
-  const first = words[0] ?? ''
-  ctx.font = font(size)
-  let take = 0
-  for (let n = 1; n <= first.length; n += 1) {
-    if (ctx.measureText(first.slice(0, n) + ELLIPSIS).width > boxW) break
-    take = n
+  /*
+   * No run of whole words fits, so cut into the text itself.
+   *
+   * Across the whole string rather than inside the first word: a definition
+   * opening on a short word — IL COULE EN ÉGYPTE, AU BOUT DU FIL — has a first
+   * word of two letters, which is under the useful minimum, and cutting only
+   * there gave up and drew an empty square. IL CO… is worth having.
+   */
+  let lo = 0
+  let hi = text.length
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2)
+    const candidate = text.slice(0, mid).trimEnd() + ELLIPSIS
+    if (lineCount(ctx, candidate, size, boxW) <= lines) lo = mid
+    else hi = mid - 1
   }
-  return take >= MIN_USEFUL_CHARS ? { text: first.slice(0, take) + ELLIPSIS, whole: false } : null
+  const cut = text.slice(0, lo).trimEnd()
+  return cut.length >= MIN_USEFUL_CHARS ? { text: cut + ELLIPSIS, whole: false } : null
 }

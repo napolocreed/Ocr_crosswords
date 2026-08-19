@@ -43,12 +43,29 @@ const CLUE_DIVIDER = 3
 /** Largest a very short definition is allowed to grow to. */
 const CLUE_MAX = BASE_CELL * 0.34
 
-const clueBox = (stacked: boolean) => ({
-  w: BASE_CELL - 2 * CLUE_PAD_X,
-  h: stacked
-    ? (BASE_CELL - 2 * CLUE_PAD_Y - CLUE_DIVIDER) / 2
-    : BASE_CELL - 2 * CLUE_PAD_Y,
-})
+/**
+ * The box each definition in a square gets.
+ *
+ * Two stacked definitions used to be given half the square each, which is only
+ * right when they are the same length — and they very often are not. MONTAGNES
+ * above FEMELLES PORCINES had the short one sitting in a half-empty box while
+ * the long one was squeezed into type two points smaller. Sharing the height by
+ * how much text there is gives the long one a third more room, with a floor
+ * under each so neither is starved.
+ */
+const clueBoxes = (texts: string[]): { w: number; h: number }[] => {
+  const w = BASE_CELL - 2 * CLUE_PAD_X
+  const full = BASE_CELL - 2 * CLUE_PAD_Y
+  if (texts.length < 2) return texts.map(() => ({ w, h: full }))
+  const usable = full - CLUE_DIVIDER
+  const weights = texts.map((text) => Math.max(4, text.trim().length))
+  const total = weights.reduce((sum, weight) => sum + weight, 0)
+  const first = Math.min(0.66, Math.max(0.34, (weights[0] ?? 1) / total))
+  return [
+    { w, h: usable * first },
+    { w, h: usable * (1 - first) },
+  ]
+}
 
 /** An arrow to draw in a letter square, put there by a neighbouring definition. */
 interface Mark {
@@ -128,82 +145,162 @@ export function GridView({
     return () => observer.disconnect()
   }, [])
 
-  // Fit the whole grid on first measure, and whenever the puzzle changes shape.
+  /*
+   * Fit the whole grid on first measure, and whenever the puzzle changes shape —
+   * but never because the box it sits in moved.
+   *
+   * This used to key on the measured viewport as well, and reset the zoom to
+   * fitted whenever that key changed. The viewport is a ResizeObserver reading
+   * `.grid-wrap`, which is `flex: 1` between the clue bar and the keyboard and
+   * is reported in fractional pixels — so selecting a word, which re-flows the
+   * clue bar by a pixel or two, resized the box and threw away whatever zoom the
+   * reader had set. Zoom in to read a definition, tap the square, and you are
+   * back to the whole grid with the text too small again. That is both halves of
+   * what was reported: definitions that stay unreadable "even when zooming", and
+   * a zoom that needs two or three attempts. A box that changes size now only
+   * pulls the grid back inside its bounds.
+   */
   const fittedFor = useRef('')
   useEffect(() => {
-    const key = `${puzzle.id}:${puzzle.rows}x${puzzle.cols}:${viewport.w}x${viewport.h}`
-    if (!viewport.w || fittedFor.current === key) return
+    if (!viewport.w) return
+    const key = `${puzzle.id}:${puzzle.rows}x${puzzle.cols}`
+    if (fittedFor.current === key) {
+      setTransform((current) => {
+        const next = clamp(current)
+        return next.zoom === current.zoom && next.x === current.x && next.y === current.y
+          ? current
+          : next
+      })
+      return
+    }
     fittedFor.current = key
     setTransform(clamp({ zoom: minZoom, x: 0, y: 0 }))
+    setTextZoom(minZoom)
   }, [puzzle.id, puzzle.rows, puzzle.cols, viewport, minZoom, clamp])
 
   /* ------------------------------------------------------- pointer handling */
 
-  const pointers = useRef(new Map<number, { x: number; y: number }>())
+  /*
+   * One record per finger on the glass, and one gesture built from them.
+   *
+   * Whether a finger travelled is kept on the finger rather than on the gesture.
+   * It used to live on the gesture, and the gesture was only cleared once every
+   * pointer had been released — so one release that never arrived (a touch the
+   * browser cancels, a capture lost when the page re-renders under the finger, a
+   * second finger the phone stops reporting) left a gesture standing with
+   * "moved" set, and from then on taps were read as the tail of a drag and
+   * thrown away. Nothing here outlives the finger it belongs to now, and a
+   * finger whose release never arrived is dropped when the browser says a new
+   * touch has begun.
+   */
+  interface Finger {
+    x: number
+    y: number
+    /** Travelled far enough to be a drag rather than a tap. */
+    moved: boolean
+    /** Shared the glass with another finger, so it is part of a pinch. */
+    multi: boolean
+    at: number
+  }
+
+  const pointers = useRef(new Map<number, Finger>())
   const gesture = useRef<{
+    pinch: boolean
     startDistance: number
-    startZoom: number
     startCentre: { x: number; y: number }
     startTransform: Transform
-    moved: boolean
   } | null>(null)
 
+  // Handlers run between renders, so they cannot read `transform` from the
+  // closure and be sure it is current.
+  const live = useRef(transform)
+  live.current = transform
+
+  const seedPan = (x: number, y: number) => {
+    gesture.current = {
+      pinch: false,
+      startDistance: 0,
+      startCentre: { x, y },
+      startTransform: live.current,
+    }
+  }
+
   const onPointerDown = (event: React.PointerEvent) => {
+    const now = Date.now()
+    // `isPrimary` is the browser saying this is the first finger of a new touch
+    // — so anything still on the books is a finger whose release never arrived,
+    // and keeping it would make this touch look like part of a pinch.
+    if (event.isPrimary) pointers.current.clear()
+    for (const [id, finger] of pointers.current) {
+      if (now - finger.at > 3000) pointers.current.delete(id)
+    }
     ;(event.target as Element).setPointerCapture?.(event.pointerId)
-    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    const multi = pointers.current.size > 0
+    pointers.current.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY,
+      moved: false,
+      multi,
+      at: now,
+    })
     if (pointers.current.size === 1) {
-      gesture.current = {
-        startDistance: 0,
-        startZoom: transform.zoom,
-        startCentre: { x: event.clientX, y: event.clientY },
-        startTransform: transform,
-        moved: false,
-      }
-    } else if (pointers.current.size === 2) {
-      const [a, b] = [...pointers.current.values()]
-      if (!a || !b) return
-      gesture.current = {
-        startDistance: Math.hypot(a.x - b.x, a.y - b.y),
-        startZoom: transform.zoom,
-        startCentre: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
-        startTransform: transform,
-        moved: true,
-      }
+      seedPan(event.clientX, event.clientY)
+      return
+    }
+    // A second finger turns whatever was happening into a pinch, and neither
+    // finger can end as a tap.
+    for (const finger of pointers.current.values()) finger.multi = true
+    const [a, b] = [...pointers.current.values()]
+    if (!a || !b) return
+    gesture.current = {
+      pinch: true,
+      startDistance: Math.hypot(a.x - b.x, a.y - b.y),
+      startCentre: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+      startTransform: live.current,
     }
   }
 
   const onPointerMove = (event: React.PointerEvent) => {
-    if (!pointers.current.has(event.pointerId)) return
-    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    const finger = pointers.current.get(event.pointerId)
+    if (!finger) return
+    finger.x = event.clientX
+    finger.y = event.clientY
+    finger.at = Date.now()
     const current = gesture.current
     if (!current) return
     const rect = wrapRef.current?.getBoundingClientRect()
     if (!rect) return
 
-    if (pointers.current.size >= 2 && current.startDistance > 0) {
+    if (current.pinch && pointers.current.size >= 2 && current.startDistance > 0) {
       const [a, b] = [...pointers.current.values()]
       if (!a || !b) return
-      const distance = Math.hypot(a.x - b.x, a.y - b.y)
-      const ratio = distance / current.startDistance
-      const zoom = current.startZoom * ratio
-      // Keep the point between the fingers pinned while scaling.
-      const anchorX = current.startCentre.x - rect.left
-      const anchorY = current.startCentre.y - rect.top
-      const scale = zoom / current.startTransform.zoom
+      const zoom =
+        current.startTransform.zoom * (Math.hypot(a.x - b.x, a.y - b.y) / current.startDistance)
+      /*
+       * Keep whatever was between the fingers when the pinch began between them
+       * now — so the pinch carries the grid along as the hand moves, which every
+       * real pinch does. Anchoring to the midpoint the pinch *started* at, as
+       * this did, scales correctly and refuses to move an inch.
+       */
+      const held = {
+        x: (current.startCentre.x - rect.left - current.startTransform.x) / current.startTransform.zoom,
+        y: (current.startCentre.y - rect.top - current.startTransform.y) / current.startTransform.zoom,
+      }
       setTransform(
         clamp({
           zoom,
-          x: anchorX - (anchorX - current.startTransform.x) * scale,
-          y: anchorY - (anchorY - current.startTransform.y) * scale,
+          x: (a.x + b.x) / 2 - rect.left - held.x * zoom,
+          y: (a.y + b.y) / 2 - rect.top - held.y * zoom,
         }),
       )
       return
     }
+    if (current.pinch) return
 
     const dx = event.clientX - current.startCentre.x
     const dy = event.clientY - current.startCentre.y
-    if (!current.moved && Math.hypot(dx, dy) > 8) current.moved = true
-    if (!current.moved) return
+    if (!finger.moved && Math.hypot(dx, dy) > 8) finger.moved = true
+    if (!finger.moved) return
     setTransform(
       clamp({
         zoom: current.startTransform.zoom,
@@ -213,62 +310,24 @@ export function GridView({
     )
   }
 
-  /*
-   * Zoom shortcuts, because pinching is not a good way to read.
-   *
-   * Fitted to a phone the definitions are at the edge of legibility however they
-   * are set, so getting in close is not an occasional thing — it is most of
-   * playing. A double tap and a button both toggle between the whole grid and a
-   * comfortable reading zoom, anchored where the tap landed so the square you
-   * were looking at stays under your thumb.
-   */
-  const comfortZoom = useMemo(() => Math.min(3, Math.max(minZoom * 1.35, 1.2)), [minZoom])
-  const isFitted = transform.zoom <= minZoom * 1.05
-
-  const zoomTo = useCallback(
-    (zoom: number, anchor?: { x: number; y: number }) => {
-      setTransform((current) => {
-        const anchorX = anchor?.x ?? viewport.w / 2
-        const anchorY = anchor?.y ?? viewport.h / 2
-        const scale = zoom / current.zoom
-        return clamp({
-          zoom,
-          x: anchorX - (anchorX - current.x) * scale,
-          y: anchorY - (anchorY - current.y) * scale,
-        })
-      })
-    },
-    [clamp, viewport],
-  )
-
-  const toggleZoom = useCallback(
-    (anchor?: { x: number; y: number }) => zoomTo(isFitted ? comfortZoom : minZoom, anchor),
-    [zoomTo, isFitted, comfortZoom, minZoom],
-  )
-
-  const lastTap = useRef<{ at: number; x: number; y: number } | null>(null)
-
   const onPointerUp = (event: React.PointerEvent) => {
-    const dragged = gesture.current?.moved === true
-    const alone = pointers.current.size === 1
     pointers.current.delete(event.pointerId)
-    if (pointers.current.size === 0) gesture.current = null
-
-    if (dragged || !alone) return
-    const rect = wrapRef.current?.getBoundingClientRect()
-    if (!rect) return
-    const point = { x: event.clientX - rect.left, y: event.clientY - rect.top }
-    const previous = lastTap.current
-    const at = Date.now()
-    if (previous && at - previous.at < 320 && Math.hypot(point.x - previous.x, point.y - previous.y) < 28) {
-      lastTap.current = null
-      toggleZoom(point)
+    if (pointers.current.size === 0) {
+      gesture.current = null
       return
     }
-    lastTap.current = { at, ...point }
+    // A pinch that loses a finger becomes a drag by the one left behind. Without
+    // re-seeding it, the remaining finger keeps working from the midpoint of a
+    // pinch that is over, and the grid jumps.
+    const [only] = [...pointers.current.values()]
+    if (only) seedPan(only.x, only.y)
   }
 
-  const wasDrag = () => gesture.current?.moved === true
+  /** True when this pointer was a drag or part of a pinch, not a tap. */
+  const wasDrag = (event: React.PointerEvent) => {
+    const finger = pointers.current.get(event.pointerId)
+    return !finger || finger.moved || finger.multi
+  }
 
   const onWheel = (event: React.WheelEvent) => {
     if (!event.ctrlKey && Math.abs(event.deltaY) < 2) return
@@ -373,19 +432,45 @@ export function GridView({
    * left every short definition set several points below what its square could
    * have carried — and, fitted to a phone, below what anyone could read.
    */
-  const clueSizes = useMemo(() => {
+  const clueLayout = useMemo(() => {
     const sizes = new Map<string, number>()
+    const boxes = new Map<string, { w: number; h: number }>()
     for (const cell of puzzle.cells) {
       if (cell.kind !== 'clue') continue
       const clues = cell.clues ?? []
-      const box = clueBox(clues.length > 1)
-      // A stacked half is capped below the full-square maximum too, so the two
-      // definitions in one square are never set at wildly different sizes.
-      const max = Math.min(CLUE_MAX, box.h * 0.62)
-      for (const clue of clues) sizes.set(clue.id, fitClueSize(clue.text, box.w, box.h, 3, max))
+      const shares = clueBoxes(clues.map((clue) => clue.text))
+      clues.forEach((clue, k) => {
+        const box = shares[k]
+        if (!box) return
+        boxes.set(clue.id, box)
+        // A stacked half is capped below the full-square maximum too, so the two
+        // definitions in one square are never set at wildly different sizes.
+        const max = Math.min(CLUE_MAX, box.h * 0.62)
+        sizes.set(clue.id, fitClueSize(clue.text, box.w, box.h, 3, max))
+      })
     }
-    return sizes
+    return { sizes, boxes }
   }, [puzzle])
+  const clueSizes = clueLayout.sizes
+
+  /*
+   * The zoom the *text* is laid out for, which lags the zoom the grid is drawn
+   * at.
+   *
+   * Deciding what each definition says means measuring text, and doing that
+   * inside the render means doing it on every frame of a pinch: a definition
+   * that has to be shortened is re-measured each time the threshold moves, and
+   * the frames where that happens run two to three times as long as the rest —
+   * a hitch you feel as the zoom stuttering. Nothing needs it to be that
+   * current. Between settling points the text simply scales with the grid like
+   * everything else, which reads better than reflowing under the fingers, and a
+   * beat after the gesture stops it is laid out again for where the zoom landed.
+   */
+  const [textZoom, setTextZoom] = useState(1)
+  useEffect(() => {
+    const id = setTimeout(() => setTextZoom(transform.zoom), 120)
+    return () => clearTimeout(id)
+  }, [transform.zoom])
 
   /*
    * The size a shortened definition is set at, rounded to a step.
@@ -400,7 +485,83 @@ export function GridView({
    * something to hold on to, and stops the text reflowing continuously under
    * the fingers as well. scripts/dev-grid.mjs measures it.
    */
-  const floorSize = Math.ceil((LEGIBLE_PX / transform.zoom) * 4) / 4
+  const floorSize = Math.ceil((LEGIBLE_PX / textZoom) * 4) / 4
+
+  /*
+   * The zoom at which nothing in this grid is cut short any more.
+   *
+   * This has to come from the definitions, not from the cell size. A fixed
+   * "comfortable" zoom was picked once by eye at 1.2, and on a real page —
+   * thirteen columns, most squares holding two definitions of about fifteen
+   * characters — 1.2 still left every long definition ending in an ellipsis.
+   * Reading is what the zoom is for, so the stop is the zoom at which the
+   * smallest definition on the page clears the legibility floor, which for that
+   * page is about 1.7. The cap keeps one monstrous definition from dragging the
+   * whole grid in to a keyhole.
+   */
+  const readZoom = useMemo(() => {
+    let smallest = Infinity
+    for (const size of clueSizes.values()) smallest = Math.min(smallest, size)
+    if (!Number.isFinite(smallest) || smallest <= 0) return Math.max(minZoom * 1.6, 1.4)
+    return Math.min(2.6, Math.max(minZoom * 1.3, LEGIBLE_PX / smallest))
+  }, [clueSizes, minZoom])
+
+  /*
+   * The stops the buttons move between: whole grid, reading, and closer still.
+   *
+   * This was one button that toggled between fitted and one zoom level, marked
+   * with a plus. Pressing a plus twice took you in and then straight back out,
+   * which reads as the control not having worked — and the way out of that is to
+   * press it again, and again. Two buttons that always move in the direction
+   * they are marked cannot do that.
+   */
+  const zoomStops = useMemo(() => {
+    const stops = [minZoom, readZoom, Math.min(4, readZoom * 1.7)]
+    return stops.filter((stop, i) => i === 0 || stop > stops[i - 1]! * 1.08)
+  }, [minZoom, readZoom])
+
+  const zoomTo = useCallback(
+    (zoom: number, anchor?: { x: number; y: number }) => {
+      setTransform((current) => {
+        const anchorX = anchor?.x ?? viewport.w / 2
+        const anchorY = anchor?.y ?? viewport.h / 2
+        const scale = zoom / current.zoom
+        return clamp({
+          zoom,
+          x: anchorX - (anchorX - current.x) * scale,
+          y: anchorY - (anchorY - current.y) * scale,
+        })
+      })
+    },
+    [clamp, viewport],
+  )
+
+  /** Move to the next stop in one direction, from wherever a pinch left things. */
+  const stepZoom = useCallback(
+    (direction: 1 | -1) => {
+      const current = transform.zoom
+      const next =
+        direction > 0
+          ? zoomStops.find((stop) => stop > current * 1.04)
+          : [...zoomStops].reverse().find((stop) => stop < current * 0.96)
+      zoomTo(next ?? (direction > 0 ? Math.min(4, current * 1.5) : Math.max(minZoom, current / 1.5)))
+    },
+    [transform.zoom, zoomStops, zoomTo, minZoom],
+  )
+
+  const canZoomIn = transform.zoom < 3.98
+  const canZoomOut = transform.zoom > minZoom * 1.02
+
+  /*
+   * There is deliberately no double-tap-to-zoom.
+   *
+   * It was tried and taken out. Two taps on one square already mean something
+   * here — usePlayState switches to the crossing answer, which is how you change
+   * direction — and two taps on *neighbouring* squares are simply how a grid
+   * gets filled in, with a square only 27 px across when the grid is fitted. A
+   * zoom gesture laid over either of those turns ordinary play into the grid
+   * jumping about. The buttons do this job without ambiguity.
+   */
 
   return (
     <div
@@ -442,8 +603,8 @@ export function GridView({
             }
             if (highlights?.has(key)) classes.push('flagged')
 
-            const handleTap = () => {
-              if (wasDrag()) return
+            const handleTap = (event: React.PointerEvent) => {
+              if (wasDrag(event)) return
               if (cell.kind === 'clue') onSelectClueCell(r, c)
               else if (cell.kind === 'letter') onSelectCell(r, c)
             }
@@ -465,13 +626,13 @@ export function GridView({
                 {cell.kind === 'clue' ? (
                   <>
                     {(cell.clues ?? []).map((clue) => {
-                      const box = clueBox((cell.clues ?? []).length > 1)
-                      let size = clueSizes.get(clue.id) ?? 4
+                      const box = clueLayout.boxes.get(clue.id)!
+                      let size = clueSizes.get(clue.id) ?? 0
                       let text: string | null = clue.text.trim()
                       if (!text) {
                         size = Math.min(CLUE_MAX, box.h * 0.6)
                         text = '—'
-                      } else if (size * transform.zoom < LEGIBLE_PX) {
+                      } else if (size < floorSize) {
                         // Too small to read whole: set it at the legibility floor
                         // and cut it short, rather than showing nothing at all.
                         const short = shortenClue(
@@ -532,19 +693,31 @@ export function GridView({
           })}
         </div>
       </div>
-      <button
-        type="button"
+      <div
         className="grid-zoom"
-        // The grid itself listens on pointer events, so the button has to keep
-        // its own out of the pan/tap machinery.
+        // The grid itself listens on pointer events, so the controls have to
+        // keep their own out of the pan/tap machinery.
         onPointerDown={(event) => event.stopPropagation()}
         onPointerMove={(event) => event.stopPropagation()}
         onPointerUp={(event) => event.stopPropagation()}
-        onClick={() => toggleZoom()}
-        aria-label={isFitted ? 'Agrandir pour lire les définitions' : 'Voir toute la grille'}
       >
-        {isFitted ? '⊕' : '⊖'}
-      </button>
+        <button
+          type="button"
+          onClick={() => stepZoom(1)}
+          disabled={!canZoomIn}
+          aria-label="Agrandir"
+        >
+          +
+        </button>
+        <button
+          type="button"
+          onClick={() => stepZoom(-1)}
+          disabled={!canZoomOut}
+          aria-label="Réduire"
+        >
+          −
+        </button>
+      </div>
     </div>
   )
 }

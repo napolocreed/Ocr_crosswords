@@ -1,39 +1,50 @@
 #!/usr/bin/env node
 /**
- * Photographs the playing grid, so how it reads can be judged rather than argued.
+ * Is the playing grid actually readable, and does zooming actually work?
  *
  *   node scripts/dev-grid.mjs
  *
  * Everything the grid has to get right — definitions small enough to fit but
  * large enough to read, arrows in the squares the answers start in, two
  * definitions stacked in one square, an arrow pointing nowhere — is a question
- * about pixels, and the only honest way to answer it is to look. This builds a
- * grid with all of those cases in it, imports it through the app's own pack
- * reader, and shoots the play screen fitted, part-way in, and close up.
+ * about pixels, and the only honest way to answer it is to look. So this builds
+ * a grid with all of those cases in it, imports it through the app's own pack
+ * reader, and shoots the play screen at three zooms in `.debug/grid-*.png`.
  *
- * The grid is synthetic on purpose: a magazine photo would have to be OCR'd
- * first, which takes minutes and puts the pipeline's mistakes in the picture
- * alongside the layout's.
+ * It also counts what a screenshot cannot: how many definitions are shown *in
+ * full* rather than cut short, at the zooms a reader can actually reach; where
+ * every arrow ended up; and whether the gestures do what they are asked, using
+ * real multi-touch rather than mouse events, because a pinch and a tap on a
+ * dense grid interfere in ways a mouse never reproduces.
+ *
+ * The layout is synthetic — a magazine photo would have to be OCR'd first,
+ * which takes minutes and mixes the pipeline's mistakes into the picture — but
+ * the definitions come from a hand transcription when one is present, because
+ * how long they are is the whole question.
  */
 import { createServer } from 'node:http'
 import { readFile, mkdir, writeFile } from 'node:fs/promises'
+import { existsSync, readFileSync } from 'node:fs'
 import { extname, join, resolve } from 'node:path'
 import { chromium } from 'playwright'
 
 /* ------------------------------------------------------------ a test grid */
 
-const DEFINITIONS = [
-  'NOTE', 'ÎLE', 'EAU', 'DEMONSTRATIF', 'COURS D\'EAU DE SUISSE', 'PRONOM',
-  'ARTICLE', 'RIVIÈRE DE FRANCE', 'IL EST TOUJOURS PRESSÉ', 'PARFOIS',
-  'MÉTAL PRÉCIEUX', 'FIN DE SOIRÉE', 'BOUT DE BOIS', 'DÉCHIFFRÉ',
-  'ON Y VA POUR SE FAIRE VOIR', 'TÊTU', 'ANCIEN', 'PAS FRAIS', 'CÉRÉALE',
-  'VIEILLE COLÈRE', 'AU BOUT DU FIL', 'MIS DE CÔTÉ', 'PETIT COURS',
-  'PIÈCE DE CHARRUE', 'CRIA COMME UN CERF', 'ÉTAT DES ÉTATS-UNIS',
-  'SYMBOLE DU SODIUM', 'REFUS', 'LAC', 'RUSÉ', 'AGENT DE LIAISON',
+/** Real definitions from a hand-transcribed page; their length is the point. */
+const TRANSCRIBED = 'fixtures/fleches-niveau2-p43.truth.json'
+const FALLBACK = [
+  'NOTE', 'ÎLE', 'DEMONSTRATIF', "COURS D'EAU DE SUISSE", 'PRONOM', 'ARTICLE',
+  'RIVIÈRE DE FRANCE', 'IL EST TOUJOURS PRESSÉ', 'PARFOIS', 'MÉTAL PRÉCIEUX',
+  'FIN DE SOIRÉE', 'BOUT DE BOIS', 'DÉCHIFFRÉ', 'ON Y VA POUR SE FAIRE VOIR',
+  'TÊTU', 'ANCIEN', 'PAS FRAIS', 'CÉRÉALE', 'VIEILLE COLÈRE', 'AU BOUT DU FIL',
+  'MIS DE CÔTÉ', 'PETIT COURS', 'PIÈCE DE CHARRUE', 'CRIA COMME UN CERF',
+  'ÉTAT DES ÉTATS-UNIS', 'REFUS', 'LAC', 'RUSÉ', 'AGENT DE LIAISON',
   'DANS LA GAMME', 'PRÉPOSITION', 'ELLE FAIT TOURNER LES TÊTES',
-  'FLEUVE CÔTIER', 'TRÈS ANCIEN', 'CONJONCTION', 'AVANT LA MATIÈRE',
-  'MESURE CHINOISE', 'SE DIT D\'UN BON VIN', 'MOT DE LIAISON', 'DIEU DU SOLEIL',
+  'FLEUVE CÔTIER', 'TRÈS ANCIEN', 'AVANT LA MATIÈRE', 'MESURE CHINOISE',
 ]
+const DEFINITIONS = existsSync(TRANSCRIBED)
+  ? JSON.parse(readFileSync(TRANSCRIBED, 'utf8')).definitions
+  : FALLBACK
 const ARROWS = ['right', 'down', 'rightDown', 'downRight']
 
 /** A tiny deterministic generator: the same grid every run, so runs compare. */
@@ -54,18 +65,18 @@ for (let r = 0; r < rows; r += 1) {
     const left = c > 0 && cells[i - 1].kind === 'clue'
     const up = r > 0 && cells[i - cols].kind === 'clue'
     if (left || up || random() > 0.22) continue
-    const stacked = random() < 0.3
-    const clues = Array.from({ length: stacked ? 2 : 1 }, (_, k) => ({
-      id: `c${i}-${k}`,
-      text: DEFINITIONS[(n++ * 13 + k * 5) % DEFINITIONS.length],
-      // The last row and column are where arrows end up pointing off the grid,
-      // which is the case that has to stay visible.
+    // Most squares on a real page hold two definitions, which is the hard case:
+    // each half gets barely a fifth of the square's height.
+    const stacked = random() < 0.6
+    const clues = Array.from({ length: stacked ? 2 : 1 }, () => ({
+      id: `c${i}-${n}`,
+      text: DEFINITIONS[n++ % DEFINITIONS.length],
       arrow: ARROWS[Math.floor(random() * 4)],
     }))
     cells[i] = { kind: 'clue', clues }
   }
 }
-// A couple of dead squares, and a mystery word reading off numbered squares.
+// A dead square, and a mystery word reading off numbered squares.
 cells[rows * cols - 1] = { kind: 'block' }
 const slots = [22, 48, 91, 137, 160].map((i) => `${Math.floor(i / cols)},${i % cols}`)
 for (const key of slots) {
@@ -84,17 +95,17 @@ const puzzle = {
   reviewed: true,
   mystery: { clue: 'CAPITALE EUROPÉENNE', slots },
 }
-const pack = {
-  format: 'grilles.pack',
-  version: 1,
-  exportedAt: 1755600000000,
-  puzzles: [puzzle],
-}
-const defs = cells.reduce((sum, cell) => sum + (cell.clues?.length ?? 0), 0)
+const pack = { format: 'grilles.pack', version: 1, exportedAt: 1755600000000, puzzles: [puzzle] }
+const wanted = cells.flatMap((cell) => (cell.clues ?? []).map((clue) => clue.text))
 await mkdir('.debug', { recursive: true })
 const packPath = resolve('.debug/dev-grid.json')
 await writeFile(packPath, JSON.stringify(pack))
-console.log(`grid ${cols} × ${rows} · ${defs} définitions`)
+const lengths = wanted.map((t) => t.length).sort((a, b) => a - b)
+console.log(
+  `grille ${cols} × ${rows} · ${wanted.length} définitions · ` +
+    `${lengths[0]}–${lengths[lengths.length - 1]} caractères, médiane ${lengths[lengths.length >> 1]}` +
+    (existsSync(TRANSCRIBED) ? '  (transcription réelle)' : '  (jeu de secours)'),
+)
 
 /* --------------------------------------------------------------- the app */
 
@@ -144,142 +155,398 @@ await page.locator('.library-item', { hasText: 'Grille de contrôle' }).click({ 
 await page.locator('.grid .cell').first().waitFor({ timeout: 10000 })
 await page.waitForTimeout(700)
 
-/** How much text the fitted grid actually shows — the number that was zero. */
-const shown = async () =>
-  page.locator('.grid .clue-text').evaluateAll((els) =>
-    els.reduce(
-      (acc, el) => {
-        const size = Number.parseFloat(getComputedStyle(el).fontSize)
-        return { count: acc.count + 1, min: Math.min(acc.min, size), max: Math.max(acc.max, size) }
-      },
-      { count: 0, min: Infinity, max: 0 },
-    ),
-  )
+const failures = []
 
 const zoom = () =>
-  page.locator('.grid-pan').evaluate((el) => {
-    const m = new DOMMatrixReadOnly(getComputedStyle(el).transform)
-    return m.a
-  })
+  page.locator('.grid-pan').evaluate((el) => new DOMMatrixReadOnly(getComputedStyle(el).transform).a)
 
-const report = async (label, file) => {
-  const { count, min, max } = await shown()
-  const z = await zoom()
-  console.log(
-    `${label.padEnd(12)} zoom ${z.toFixed(2)}  ·  ${count}/${defs} définitions affichées` +
-      (count ? `  ·  ${(min * z).toFixed(1)}–${(max * z).toFixed(1)} px réels` : ''),
+/**
+ * What the grid is showing: not just how many definitions have text, but how
+ * many have ALL of their text. A square reading ACCROIS… is not a definition,
+ * and counting it as one is how the fitted grid came to look solved when it
+ * was not.
+ */
+const legibility = async () => {
+  const shown = await page.locator('.grid .cell').evaluateAll((els) =>
+    els.map((el) =>
+      [...el.querySelectorAll('.clue-text')].map((t) => ({
+        text: t.textContent,
+        size: Number.parseFloat(getComputedStyle(t).fontSize),
+      })),
+    ),
   )
-  await page.screenshot({ path: `.debug/grid-${file}.png` })
+  const z = await zoom()
+  let drawn = 0
+  let whole = 0
+  let smallest = Infinity
+  const cut = []
+  cells.forEach((cell, i) => {
+    ;(cell.clues ?? []).forEach((clue, k) => {
+      const rendered = shown[i]?.[k]
+      if (!rendered) return
+      drawn += 1
+      smallest = Math.min(smallest, rendered.size * z)
+      if (rendered.text === clue.text) whole += 1
+      else cut.push(`${clue.text} → ${rendered.text}`)
+    })
+  })
+  return { z, drawn, whole, smallest, cut }
 }
 
-await report('fitted', 'fit')
+const report = async (label, file) => {
+  const { z, drawn, whole, smallest } = await legibility()
+  console.log(
+    `${label.padEnd(13)}zoom ${z.toFixed(2)}  ·  ${drawn}/${wanted.length} affichées  ·  ` +
+      `${whole}/${wanted.length} ENTIÈRES  ·  plus petite ${smallest.toFixed(1)} px`,
+  )
+  if (file) await page.screenshot({ path: `.debug/grid-${file}.png` })
+  return { z, drawn, whole }
+}
 
-// Which definitions the fitted grid gives up on. A square showing nothing is
-// the failure the whole change is about, so name the ones that still do.
-const drawn = await page.locator('.grid .cell').evaluateAll((els) =>
-  els.map((el) => el.querySelectorAll('.clue-text').length),
-)
-const mute = cells.flatMap((cell, i) =>
-  (cell.clues ?? []).slice(drawn[i] ?? 0).map((clue) => clue.text),
-)
-if (mute.length) console.log(`             muettes: ${mute.join(' | ')}`)
+/** Wheel the zoom until it reaches `target`, or give up. */
+const zoomToward = async (target) => {
+  await page.mouse.move(195, 400)
+  for (let i = 0; i < 60; i += 1) {
+    const z = await zoom()
+    if (Math.abs(z - target) < 0.02 || (target > z ? false : true) === (z < target)) {
+      if (target > z ? z >= target : z <= target) break
+    }
+    if ((target > z && z >= target) || (target < z && z <= target)) break
+    await page.mouse.wheel(0, target > z ? -120 : 120)
+  }
+  await page.waitForTimeout(250)
+  return zoom()
+}
+
+console.log('\n— lisibilité —')
+const fitted = await report('ajusté', 'fit')
 
 /*
- * Where the arrows ended up. The whole point of the change is that they are no
- * longer inside the shaded squares, so count them: every arrow should be in a
- * letter square, and the only ones left in a definition are the ones pointing
- * at no square at all.
+ * Do the accents survive?
+ *
+ * French definitions are set in capitals and thick with É È Ê Î Ô Ç, and a line
+ * tighter than the font's own box clips the accents off the first line of each
+ * square — silently, and unpredictably, since it depends on how the size
+ * rounds. EMPLOYÉ becomes EMPLOYE, which is a different word. Nothing in the
+ * text counts catches it, because the text is right; only the paint is wrong.
+ * So this measures the ink: how far an accented capital reaches above the
+ * baseline, against the room the layout actually leaves above it.
+ */
+const accents = await page.evaluate(() => {
+  const sample = document.querySelector('.grid .clue-text')
+  if (!sample) return []
+  const style = getComputedStyle(sample)
+  const base = Number.parseFloat(style.fontSize)
+  const room = Number.parseFloat(style.paddingTop) / base
+  const leading = Number.parseFloat(style.lineHeight) / base
+  // The sizes actually painted on this grid, not a guessed ladder.
+  const sizes = [
+    ...new Set(
+      [...document.querySelectorAll('.grid .clue-text')].map((el) =>
+        Number.parseFloat(getComputedStyle(el).fontSize).toFixed(2),
+      ),
+    ),
+  ].map(Number)
+  const ctx = document.createElement('canvas').getContext('2d')
+  return sizes.map((size) => {
+    ctx.font = `${style.fontWeight} ${size}px ${style.fontFamily}`
+    const m = ctx.measureText('ÉÈÊÎÔÇÀ')
+    const halfLeading = (size * leading - (m.fontBoundingBoxAscent + m.fontBoundingBoxDescent)) / 2
+    const above = room * size + halfLeading + m.fontBoundingBoxAscent
+    return { size, margin: above - m.actualBoundingBoxAscent }
+  })
+})
+const tightest = accents.reduce((worst, a) => (a.margin < worst.margin ? a : worst), accents[0] ?? { margin: 0, size: 0 })
+console.log(
+  `accents      marge la plus faible ${tightest.margin.toFixed(2)} px à ${tightest.size} px` +
+    (tightest.margin < 0 ? '  ← ROGNÉS' : ''),
+)
+if (tightest.margin < 0) failures.push('les accents des capitales sont rognés sur la première ligne')
+
+/*
+ * Where the arrows ended up. Every arrow should be in a letter square; the only
+ * ones left in a definition are the ones pointing at no square at all.
  */
 const placed = await page.locator('.grid .cell:not(.clue) .grid-arrow').count()
 const stranded = await page.locator('.grid .cell.clue .grid-arrow').count()
-const wrong = await page.locator('.grid .cell.clue .grid-arrow:not(.orphan)').count()
+const stray = await page.locator('.grid .cell.clue .grid-arrow:not(.orphan)').count()
 console.log(
-  `arrows       ${placed} dans les cases à remplir · ${stranded} sans case (signalées)` +
-    (wrong ? `  ← ${wrong} DANS UNE DÉFINITION SANS RAISON` : ''),
+  `flèches      ${placed} dans les cases à remplir · ${stranded} sans case (signalées)`,
 )
-if (placed + stranded !== defs) {
-  console.log(`  FAIL ${defs} définitions mais ${placed + stranded} flèches dessinées`)
+if (stray) failures.push(`${stray} flèches dessinées dans une définition sans raison`)
+if (placed + stranded !== wanted.length) {
+  failures.push(`${wanted.length} définitions mais ${placed + stranded} flèches`)
 }
 
 /*
- * The two ways in and back out again. Both exist because one is discoverable
- * and the other is quick, and a shortcut that only works one way is a trap:
- * getting close is useless if getting the whole grid back needs a pinch.
+ * What one press of + gets you. This is the number that matters: a reader who
+ * presses zoom once and still sees half-definitions has been told the control
+ * does not work.
  */
-const fittedZoom = await zoom()
-const doubleTap = async () => {
-  for (let i = 0; i < 2; i += 1) {
-    await page.mouse.move(195, 400)
-    await page.mouse.down()
-    await page.mouse.up()
-    await page.waitForTimeout(60)
+const zoomIn = page.locator('.grid-zoom button[aria-label=Agrandir]')
+const zoomOut = page.locator('.grid-zoom button[aria-label="Réduire"]')
+await zoomIn.click()
+await page.waitForTimeout(450)
+const shortcut = await report('un + ', 'zoomed')
+if (shortcut.whole < wanted.length) {
+  failures.push(
+    `une pression sur + ne montre que ${shortcut.whole}/${wanted.length} définitions entières`,
+  )
+}
+
+// And pressing + again must go further in, never back out — the failure that
+// read as "I have to try two or three times".
+const climb = [shortcut.z]
+for (let i = 0; i < 3; i += 1) {
+  if (!(await zoomIn.isEnabled())) break
+  await zoomIn.click()
+  await page.waitForTimeout(350)
+  climb.push(await zoom())
+}
+console.log(`+ + +        ${climb.map((z) => z.toFixed(2)).join(' → ')}`)
+for (let i = 1; i < climb.length; i += 1) {
+  if (climb[i] <= climb[i - 1]) failures.push('une pression sur + a réduit le zoom')
+}
+const descend = [await zoom()]
+for (let i = 0; i < 4; i += 1) {
+  if (!(await zoomOut.isEnabled())) break
+  await zoomOut.click()
+  await page.waitForTimeout(350)
+  descend.push(await zoom())
+}
+console.log(`− − −        ${descend.map((z) => z.toFixed(2)).join(' → ')}`)
+for (let i = 1; i < descend.length; i += 1) {
+  if (descend[i] >= descend[i - 1]) failures.push('une pression sur − a agrandi le zoom')
+}
+if (Math.abs(descend[descend.length - 1] - fitted.z) > 0.02) {
+  failures.push('à force de réduire on ne revient pas à la grille entière')
+}
+
+/*
+ * The zoom a reader actually needs. This is the number the shortcut has to
+ * land on: below it the squares are full of half-definitions, and guessing it
+ * from the cell size rather than from the definitions is how the shortcut came
+ * to stop short of being useful.
+ */
+const ladder = []
+for (const target of [0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.4]) {
+  const z = await zoomToward(target)
+  const { whole } = await legibility()
+  ladder.push(`${z.toFixed(1)}:${whole}`)
+}
+console.log(`entières par zoom  ${ladder.join('  ')}  (sur ${wanted.length})`)
+
+await zoomToward(4)
+const deepest = await report('zoom maxi', 'close')
+if (deepest.whole < wanted.length) {
+  const { cut } = await legibility()
+  failures.push(`même au zoom maximum, ${wanted.length - deepest.whole} définitions restent coupées`)
+  console.log(`             ex.: ${cut.slice(0, 3).join(' | ')}`)
+}
+
+/* ------------------------------------------------------------- gestures */
+
+console.log('\n— gestes (vrai multi-touch) —')
+const cdp = await context.newCDPSession(page)
+const touch = (type, points) =>
+  cdp.send('Input.dispatchTouchEvent', {
+    type,
+    touchPoints: points.map((p, i) => ({ x: p.x, y: p.y, id: i, radiusX: 12, radiusY: 12 })),
+  })
+
+/** A two-finger pinch about (cx, cy), fingers going from `from` apart to `to`. */
+const pinch = async (cx, cy, from, to) => {
+  const at = (gap) => [
+    { x: cx - gap / 2, y: cy },
+    { x: cx + gap / 2, y: cy },
+  ]
+  await touch('touchStart', at(from))
+  for (let i = 1; i <= 14; i += 1) {
+    await touch('touchMove', at(from + ((to - from) * i) / 14))
+    await page.waitForTimeout(16)
   }
+  await touch('touchEnd', [])
+  await page.waitForTimeout(300)
+}
+
+const tap = (x, y) => page.touchscreen.tap(x, y)
+const selected = () =>
+  page.evaluate(() => {
+    const all = [...document.querySelectorAll('.grid .cell')]
+    const active = document.querySelector('.grid .cell.active')
+    return active ? String(all.indexOf(active)) : ''
+  })
+
+await zoomToward(fitted.z)
+let before = await zoom()
+await pinch(195, 420, 80, 300)
+let after = await zoom()
+console.log(`pincer +     ${before.toFixed(2)} → ${after.toFixed(2)}`)
+if (after < before * 1.5) failures.push('un pincement pour agrandir ne change presque rien')
+
+before = after
+await pinch(195, 420, 300, 90)
+after = await zoom()
+console.log(`pincer −     ${before.toFixed(2)} → ${after.toFixed(2)}`)
+if (after > before * 0.75) failures.push('un pincement pour réduire ne change presque rien')
+
+// Three pinches in a row: the reported symptom is having to try again, so a
+// single successful one proves nothing. Each starts from the fitted grid, or
+// the last of them would only be measuring the zoom ceiling.
+for (let i = 0; i < 3; i += 1) {
+  await zoomToward(fitted.z)
+  const was = await zoom()
+  await pinch(195, 420, 90, 240)
+  const now = await zoom()
+  if (i === 0) console.log(`pincements   ${was.toFixed(2)} → ${now.toFixed(2)} (×3)`)
+  if (now < was * 1.3) failures.push(`le pincement n° ${i + 1} d'une série n'a pas agrandi`)
+}
+
+// Filling in letters means tapping neighbouring squares in quick succession.
+// That must never be mistaken for a double tap.
+await zoomToward(fitted.z)
+/*
+ * Two squares side by side that can actually be selected. A square no
+ * definition leads to is ignored on purpose (usePlayState.selectCell returns
+ * early), so picking one of those would make this test pass while measuring
+ * nothing — hence trying the candidates until a tap really moves the selection.
+ */
+const candidates = await page.evaluate(() => {
+  const all = [...document.querySelectorAll('.grid .cell')]
+  const pairs = []
+  for (let i = 0; i < all.length - 1; i += 1) {
+    const a = all[i]
+    const b = all[i + 1]
+    if (a.className !== 'cell' || b.className !== 'cell') continue
+    const ra = a.getBoundingClientRect()
+    const rb = b.getBoundingClientRect()
+    if (rb.left < ra.left || Math.abs(rb.top - ra.top) > 1) continue
+    if (ra.top < 260 || ra.bottom > 620) continue
+    pairs.push([
+      { x: ra.left + ra.width / 2, y: ra.top + ra.height / 2, i },
+      { x: rb.left + rb.width / 2, y: rb.top + rb.height / 2, i: i + 1 },
+    ])
+  }
+  return pairs
+})
+
+let neighbours = null
+for (const pair of candidates) {
+  // Both squares have to be selectable, not just the first: half the point of
+  // the test is that the second tap lands where it was aimed.
+  await tap(pair[0].x, pair[0].y)
+  await page.waitForTimeout(150)
+  if ((await selected()) !== String(pair[0].i)) continue
+  await tap(pair[1].x, pair[1].y)
+  await page.waitForTimeout(150)
+  if ((await selected()) !== String(pair[1].i)) continue
+  neighbours = pair
+  break
+}
+
+await page.waitForTimeout(700)
+
+if (!neighbours) console.log('  (aucune paire de cases voisines sélectionnable)')
+else {
+  const was = await zoom()
+  const before = await page.locator('.grid-pan').evaluate((el) => {
+    const m = new DOMMatrixReadOnly(getComputedStyle(el).transform)
+    return `${m.e.toFixed(1)},${m.f.toFixed(1)}`
+  })
+  await tap(neighbours[0].x, neighbours[0].y)
+  await page.waitForTimeout(140)
+  const first = await selected()
+  // Selecting a square nudges the grid to keep it in view. At fitted zoom the
+  // whole grid is on screen, so it must not move at all — a grid that shifts
+  // under the finger makes the next tap land somewhere else.
+  const after = await page.locator('.grid-pan').evaluate((el) => {
+    const m = new DOMMatrixReadOnly(getComputedStyle(el).transform)
+    return `${m.e.toFixed(1)},${m.f.toFixed(1)}`
+  })
+  if (before !== after) failures.push(`toucher une case déplace la grille (${before} → ${after})`)
+  await tap(neighbours[1].x, neighbours[1].y)
+  await page.waitForTimeout(400)
+  const second = await selected()
+  const now = await zoom()
+  const gap = Math.hypot(neighbours[1].x - neighbours[0].x, neighbours[1].y - neighbours[0].y)
+  console.log(
+    `2 cases voisines  ${gap.toFixed(0)} px d'écart · zoom ${was.toFixed(2)} → ${now.toFixed(2)}` +
+      `  (visée ${neighbours[0].i}/${neighbours[1].i}, atteinte ${first || 'aucune'}/${second || 'aucune'})`,
+  )
+  // A test that silently failed to tap anything would pass the zoom check while
+  // measuring nothing, so the selection has to have followed the fingers.
+  if (first !== String(neighbours[0].i) || second !== String(neighbours[1].i)) {
+    failures.push('un toucher sur une case ne la sélectionne pas')
+  }
+  if (Math.abs(now - was) > 0.02) {
+    failures.push('toucher deux cases voisines coup sur coup déclenche le zoom')
+  }
+
+  // Two taps on one square already mean "switch to the crossing answer". The
+  // zoom must keep its hands off it.
+  const before2 = await zoom()
+  await tap(neighbours[0].x, neighbours[0].y)
+  await page.waitForTimeout(120)
+  await tap(neighbours[0].x, neighbours[0].y)
+  await page.waitForTimeout(500)
+  const after2 = await zoom()
+  console.log(`2× la même case   zoom ${before2.toFixed(2)} → ${after2.toFixed(2)}`)
+  if (Math.abs(after2 - before2) > 0.02) {
+    failures.push('toucher deux fois la même case déclenche le zoom')
+  }
+}
+
+/*
+ * The zoom has to survive playing.
+ *
+ * Selecting a word re-flows the clue bar below the grid, which resizes the grid's
+ * own box by a pixel or two. If that is treated as "the grid needs fitting
+ * again", zooming in to read and then tapping the square you were reading throws
+ * you straight back out — and the definitions are cut again. That is the loop
+ * the report describes, so it is worth a test of its own.
+ */
+/*
+ * Press + until it has actually gone in. Starting from the rubber-band band
+ * just below the fitted size — where a wheel or a pinch can easily leave it —
+ * the first press only snaps back to fitted, and measuring there would be
+ * measuring the fitted view again.
+ */
+for (let i = 0; i < 4; i += 1) {
+  if ((await zoom()) > fitted.z * 1.2) break
+  await zoomIn.click()
   await page.waitForTimeout(400)
 }
-await doubleTap()
-const tappedIn = await zoom()
-await doubleTap()
-const tappedOut = await zoom()
-console.log(
-  `double tap   ${fittedZoom.toFixed(2)} → ${tappedIn.toFixed(2)} → ${tappedOut.toFixed(2)}` +
-    (tappedIn > fittedZoom * 1.3 && Math.abs(tappedOut - fittedZoom) < 0.02 ? '' : '  ← FAIL'),
-)
-
-await page.locator('.grid-zoom').click()
-await page.waitForTimeout(500)
-const buttonIn = await zoom()
-await page.locator('.grid-zoom').click()
-await page.waitForTimeout(500)
-const buttonOut = await zoom()
-console.log(
-  `bouton       ${fittedZoom.toFixed(2)} → ${buttonIn.toFixed(2)} → ${buttonOut.toFixed(2)}` +
-    (buttonIn > fittedZoom * 1.3 && Math.abs(buttonOut - fittedZoom) < 0.02 ? '' : '  ← FAIL'),
-)
-await page.locator('.grid-zoom').click()
-await page.waitForTimeout(500)
-await report('bouton zoom', 'zoomed')
-
-/*
- * Write into a square that has an arrow in it. On paper the letter is written
- * over the arrow, and the two have to stay apart enough to read — looking is
- * the only way to tell whether they do.
- *
- * The square is chosen by where it is on screen rather than by its index: the
- * grid is panned and scaled inside its own transform, so most of it is off the
- * viewport and Playwright cannot click what it cannot reach.
- */
-const spot = await page.evaluate(() => {
-  for (const cell of document.querySelectorAll('.grid .cell:not(.clue)')) {
-    if (!cell.querySelector('.grid-arrow')) continue
-    const box = cell.getBoundingClientRect()
-    if (box.top > 200 && box.bottom < 620 && box.left > 30 && box.right < 360) {
-      return { x: box.left + box.width / 2, y: box.top + box.height / 2 }
+const readingZoom = await zoom()
+const somewhere = await page.evaluate(() => {
+  for (const cell of document.querySelectorAll('.grid .cell')) {
+    if (cell.className !== 'cell') continue
+    const r = cell.getBoundingClientRect()
+    if (r.top > 220 && r.bottom < 560 && r.left > 40 && r.right < 350) {
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
     }
   }
   return null
 })
-if (!spot) console.log('  (aucune case fléchée visible où écrire)')
-else {
-  await page.mouse.click(spot.x, spot.y)
-  for (const letter of ['A', 'M', 'S', 'T', 'E', 'R']) {
-    await page.getByRole('button', { name: letter, exact: true }).first().click().catch(() => {})
+if (somewhere) {
+  await tap(somewhere.x, somewhere.y)
+  await page.waitForTimeout(500)
+  const kept = await zoom()
+  const bar = await page.locator('.cluebar .text').innerText().catch(() => '')
+  console.log(
+    `zoom conservé  ${readingZoom.toFixed(2)} → ${kept.toFixed(2)} après avoir touché une case` +
+      `  (barre : ${bar.slice(0, 34)})`,
+  )
+  if (Math.abs(kept - readingZoom) > 0.02) {
+    failures.push(`toucher une case a ramené le zoom de ${readingZoom.toFixed(2)} à ${kept.toFixed(2)}`)
   }
-  await page.waitForTimeout(400)
+  const { whole } = await legibility()
+  if (whole < wanted.length) {
+    failures.push(`après avoir touché une case, ${wanted.length - whole} définitions sont recoupées`)
+  }
 }
 
-// And right in, where the definitions are meant to be plainly readable.
-await page.mouse.move(spot?.x ?? 195, spot?.y ?? 300)
-for (let i = 0; i < 5; i += 1) await page.mouse.wheel(0, -120)
-await page.waitForTimeout(500)
-await report('rapproché', 'close')
+/* -------------------------------------------------------------- smoothness */
 
-/*
- * What a pinch costs. Shortening a definition means measuring text, and it runs
- * while the grid renders, so a careless version re-measures every definition on
- * every frame. That is invisible on a desktop and ruinous on a phone, so the
- * frames are timed rather than reasoned about: this walks the zoom across the
- * range where shortening switches on and off, and reports the worst frame.
- */
 await page.evaluate(() => {
   window.__frames = []
   let last = performance.now()
@@ -291,18 +558,37 @@ await page.evaluate(() => {
   }
   requestAnimationFrame(tick)
 })
+await page.mouse.move(195, 400)
 // No pause between steps: a pinch does not give the browser time to catch up
 // between frames either, and a sweep with gaps in it measures nothing.
-for (let i = 0; i < 80; i += 1) await page.mouse.wheel(0, i % 40 < 20 ? 120 : -120)
-await page.waitForTimeout(200)
-const frames = await page.evaluate(() => window.__frames.slice(5))
-frames.sort((a, b) => a - b)
-const worst = frames[frames.length - 1] ?? 0
-const median = frames[Math.floor(frames.length / 2)] ?? 0
-console.log(
-  `zoom fluide  ${frames.length} images · médiane ${median.toFixed(1)} ms · pire ${worst.toFixed(1)} ms` +
-    (worst > 60 ? '  ← SACCADE' : ''),
-)
+// Short runs each way, so the zoom keeps moving instead of sitting against a
+// limit — parked at the ceiling it is no longer a gesture, and the text
+// settling there would be counted as a stutter under the fingers.
+for (let i = 0; i < 64; i += 1) await page.mouse.wheel(0, i % 16 < 8 ? 120 : -120)
 
+/*
+ * Two numbers, because they mean different things. Frames *while the zoom is
+ * moving* are the ones a hand feels; a single long frame once it has stopped —
+ * the text being laid out again for where the zoom landed — is barely
+ * noticeable, and is the price of not doing that work sixty times a second.
+ */
+const moving = (await page.evaluate(() => window.__frames.slice(5))).sort((a, b) => a - b)
+await page.waitForTimeout(500)
+const settling = (await page.evaluate(() => window.__frames)).slice(moving.length + 5)
+const worst = moving[moving.length - 1] ?? 0
+const settle = Math.max(0, ...settling)
+console.log(
+  `\nzoom fluide  ${moving.length} images pendant le geste · médiane ` +
+    `${(moving[moving.length >> 1] ?? 0).toFixed(1)} ms · pire ${worst.toFixed(1)} ms` +
+    ` · reprise après l'arrêt ${settle.toFixed(1)} ms`,
+)
+if (worst > 45) failures.push(`une image a pris ${worst.toFixed(0)} ms pendant le geste`)
+if (settle > 150) failures.push(`la reprise du texte après l'arrêt a pris ${settle.toFixed(0)} ms`)
+
+console.log(
+  failures.length === 0
+    ? '\nTOUT PASSE.'
+    : `\nÉCHECS :\n  - ${failures.join('\n  - ')}`,
+)
 await browser.close()
 server.close()

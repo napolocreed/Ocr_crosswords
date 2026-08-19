@@ -210,16 +210,31 @@ regarder. Le script construit une grille contenant tous ces cas, l'importe par
 le lecteur de paquets de l'app, et photographie l'écran de jeu à trois niveaux
 de zoom dans `.debug/grid-*.png`.
 
-Il chiffre aussi trois choses qui se dégradent en silence :
+Les définitions viennent d'une **transcription à la main** quand il y en a une
+dans `fixtures/`, parce que leur longueur est toute la question.
 
-- **combien de définitions sont réellement affichées** à chaque zoom. Avant, la
-  grille dézoomée n'en affichait aucune ;
+Il chiffre ce qui se dégrade en silence :
+
+- **combien de définitions sont affichées *entières***, et pas seulement
+  affichées. Une case qui dit `ACCROIS…` n'est pas une définition, et la compter
+  comme telle est la façon dont la grille a pu paraître lisible sans l'être ;
+- **le zoom qu'une pression sur `+` atteint vraiment.** C'est le chiffre qui
+  compte : un lecteur qui appuie une fois et voit encore des demi-définitions a
+  compris que la commande ne marche pas ;
+- **que le zoom survive au jeu.** Sélectionner un mot re-compose la barre de
+  définition et redimensionne la grille de deux pixels ; si c'est pris pour « il
+  faut réajuster », zoomer puis toucher une case vous rejette dehors ;
+- **que les accents survivent.** `EMPLOYÉ` rendu `EMPLOYE` est un autre mot, et
+  aucun comptage de texte ne le voit puisque le texte est juste : c'est la
+  peinture qui est fausse. On mesure donc l'encre au-dessus de la ligne de base ;
+- **les gestes, en vrai multi-touch** (pincements répétés, deux cases voisines
+  touchées coup sur coup, deux fois la même case) — un pincement et un toucher
+  sur une grille dense interfèrent d'une façon qu'une souris ne reproduit pas ;
 - **où sont les flèches** : toutes dans des cases à remplir, sauf celles qui ne
   pointent vers aucune case, gardées dans la définition et signalées ;
-- **la fluidité du zoom**, parce que raccourcir une définition demande de mesurer
-  du texte pendant le rendu. Sans arrondi, un balayage de zoom coûte une image
-  perdue (38 ms au pire contre 19 ms) sur une machine de bureau, donc bien plus
-  sur un téléphone.
+- **la fluidité du zoom**, séparée en deux : les images *pendant* le geste, que
+  la main sent, et la reprise une fois arrêté. Raccourcir une définition demande
+  de mesurer du texte ; le faire à chaque image coûtait des images perdues.
 
 ## Architecture
 
