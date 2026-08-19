@@ -14,7 +14,13 @@ import { fitClueSize, shortenClue } from '../lib/clueTypography'
  */
 
 /**
- * Smallest type, in physical pixels, that is worth drawing at all.
+ * Smallest type worth drawing at all, in CSS pixels on screen.
+ *
+ * CSS pixels, not device pixels: nothing here reads devicePixelRatio, and the
+ * comparison is a font-size in grid units against the zoom that scales them —
+ * running the grid at a device ratio of 1 and of 3 gives byte-identical text.
+ * (This said "physical pixels" for a while, which is the sort of comment that
+ * sends the next person hunting for a bug that is not there.)
  *
  * Below this a definition is texture, not text. Rather than blank the square
  * when its definition will not fit — which left the fitted grid with no text in
