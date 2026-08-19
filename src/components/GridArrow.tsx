@@ -52,9 +52,10 @@ interface Props {
  * The magazines draw these small — a mark hugging the border, not a symbol
  * filling the box — because the square still has to be written in. Large enough
  * that the bend is legible with the whole grid on screen, small enough that a
- * letter written over it stays the more prominent of the two.
+ * letter written over it stays the more prominent of the two. 0.4 read as too
+ * heavy next to the letters in play, so it came down.
  */
-const ARROW_SIZE = 0.4
+const ARROW_SIZE = 0.3
 
 export function GridArrow({ arrow, cell, lane, orphan }: Props) {
   const shape = SHAPES[arrow]

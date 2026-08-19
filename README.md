@@ -224,6 +224,9 @@ Il chiffre ce qui se dégrade en silence :
 - **que le zoom survive au jeu.** Sélectionner un mot re-compose la barre de
   définition et redimensionne la grille de deux pixels ; si c'est pris pour « il
   faut réajuster », zoomer puis toucher une case vous rejette dehors ;
+- **que les traits d'union cassent la ligne.** Les magazines coupent leurs
+  définitions avec des tirets (ABAN-DONNÉE) et l'OCR les garde ; le corpus de
+  test en contient donc, et une définition à tiret doit s'afficher entière ;
 - **que les accents survivent.** `EMPLOYÉ` rendu `EMPLOYE` est un autre mot, et
   aucun comptage de texte ne le voit puisque le texte est juste : c'est la
   peinture qui est fausse. On mesure donc l'encre au-dessus de la ligne de base ;

@@ -42,9 +42,31 @@ const FALLBACK = [
   'DANS LA GAMME', 'PRÉPOSITION', 'ELLE FAIT TOURNER LES TÊTES',
   'FLEUVE CÔTIER', 'TRÈS ANCIEN', 'AVANT LA MATIÈRE', 'MESURE CHINOISE',
 ]
-const DEFINITIONS = existsSync(TRANSCRIBED)
+const SOURCE = existsSync(TRANSCRIBED)
   ? JSON.parse(readFileSync(TRANSCRIBED, 'utf8')).definitions
   : FALLBACK
+
+/*
+ * The magazines hyphenate long words to fit their squares — ABAN-DONNÉE,
+ * CONS-TRUCTION on the real pages — and the OCR keeps those hyphens, so the
+ * grid has to treat them as the line-break helpers they are. The transcription
+ * writes the words out whole, so re-create the OCR's view on a slice of the
+ * corpus: every fourth definition gets its longest word hyphenated at the
+ * middle, deterministically.
+ */
+const DEFINITIONS = SOURCE.map((text, i) => {
+  if (i % 4 !== 1) return text
+  const words = text.split(' ')
+  let longest = 0
+  for (let k = 1; k < words.length; k += 1) {
+    if (words[k].length > words[longest].length) longest = k
+  }
+  const word = words[longest]
+  if (word.length < 8 || word.includes('-')) return text
+  const mid = Math.ceil(word.length / 2)
+  words[longest] = word.slice(0, mid) + '-' + word.slice(mid)
+  return words.join(' ')
+})
 const ARROWS = ['right', 'down', 'rightDown', 'downRight']
 
 /** A tiny deterministic generator: the same grid every run, so runs compare. */
@@ -101,8 +123,9 @@ await mkdir('.debug', { recursive: true })
 const packPath = resolve('.debug/dev-grid.json')
 await writeFile(packPath, JSON.stringify(pack))
 const lengths = wanted.map((t) => t.length).sort((a, b) => a - b)
+const withHyphen = wanted.filter((t) => t.includes('-')).length
 console.log(
-  `grille ${cols} × ${rows} · ${wanted.length} définitions · ` +
+  `grille ${cols} × ${rows} · ${wanted.length} définitions (${withHyphen} avec trait d'union) · ` +
     `${lengths[0]}–${lengths[lengths.length - 1]} caractères, médiane ${lengths[lengths.length >> 1]}` +
     (existsSync(TRANSCRIBED) ? '  (transcription réelle)' : '  (jeu de secours)'),
 )
@@ -276,6 +299,18 @@ console.log(
 if (stray) failures.push(`${stray} flèches dessinées dans une définition sans raison`)
 if (placed + stranded !== wanted.length) {
   failures.push(`${wanted.length} définitions mais ${placed + stranded} flèches`)
+}
+// And their size: a mark hugging the border, not a symbol filling the box.
+const arrowShare = await page
+  .locator('.grid .cell .grid-arrow')
+  .first()
+  .evaluate((el) => {
+    const cell = el.closest('.cell')
+    return el.getBoundingClientRect().width / cell.getBoundingClientRect().width
+  })
+console.log(`             taille : ${(arrowShare * 100).toFixed(0)} % de la case`)
+if (arrowShare > 0.34) {
+  failures.push(`les flèches occupent ${(arrowShare * 100).toFixed(0)} % de la case`)
 }
 
 /*

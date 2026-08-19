@@ -74,10 +74,35 @@ function useFont(ctx: CanvasRenderingContext2D, size: number) {
 }
 
 /**
+ * Where a line may break: at spaces, and after a hyphen.
+ *
+ * The hyphens matter twice over. Magazines hyphenate long definitions to fit
+ * their squares — ABAN-DONNÉE, CONS-TRUCTION — and the OCR keeps those hyphens,
+ * so a measurement treating ABAN-DONNÉE as one unbreakable word could only fit
+ * it by shrinking the type or cutting it to ABAN…. And real compounds —
+ * PAS-DE-CALAIS, TEEN-AGER — break at their hyphens in print whenever the
+ * square is narrow; that is what the hyphen is for. The browser already breaks
+ * after a hyphen on its own (verified against Chromium: TEEN-AGER in a narrow
+ * box renders as TEEN- / AGER), so refusing to here meant the measurement and
+ * the rendering disagreed, always in the direction of showing less.
+ */
+function wrapTokens(text: string): { text: string; joined: boolean }[] {
+  const tokens: { text: string; joined: boolean }[] = []
+  for (const word of text.split(/\s+/)) {
+    if (!word) continue
+    word.split(/(?<=-)/).forEach((part, i) => {
+      if (part) tokens.push({ text: part, joined: i > 0 })
+    })
+  }
+  return tokens
+}
+
+/**
  * Lines a greedy wrap needs for `text` at `size` in a box `width` wide.
  *
- * Mirrors `word-break: break-word`: a word wider than the box is split across
- * lines rather than allowed to overflow.
+ * Mirrors the browser: breaks at spaces and after hyphens, and — matching
+ * `word-break: break-word` — a fragment wider than the box on its own is split
+ * across lines rather than allowed to overflow.
  */
 function lineCount(
   ctx: CanvasRenderingContext2D,
@@ -86,12 +111,16 @@ function lineCount(
   width: number,
 ): number {
   useFont(ctx, size)
-  const words = text.split(/\s+/).filter(Boolean)
-  if (words.length === 0) return 0
+  const tokens = wrapTokens(text)
+  if (tokens.length === 0) return 0
   let lines = 1
   let current = ''
-  for (const word of words) {
-    const candidate = current ? `${current} ${word}` : word
+  for (const token of tokens) {
+    const candidate = current
+      ? token.joined
+        ? current + token.text
+        : `${current} ${token.text}`
+      : token.text
     if (ctx.measureText(candidate).width <= width) {
       current = candidate
       continue
@@ -100,12 +129,12 @@ function lineCount(
       lines += 1
       current = ''
     }
-    if (ctx.measureText(word).width <= width) {
-      current = word
+    if (ctx.measureText(token.text).width <= width) {
+      current = token.text
       continue
     }
     let chunk = ''
-    for (const character of word) {
+    for (const character of token.text) {
       if (ctx.measureText(chunk + character).width <= width) {
         chunk += character
         continue
@@ -130,19 +159,22 @@ function fitsIn(
 }
 
 /**
- * The largest size at which no word has to be broken across lines.
+ * The largest size at which nothing has to break anywhere but at a space or a
+ * hyphen.
  *
  * Text that merely *fits* is not the goal. Set at the largest size its box would
  * take, "RIVIÈRE DE FRANCE" came out as RIVIERE / DE / FRANC / E — inside the
  * square, and unreadable at a glance, because a break with nothing marking it
  * reads as a different word. A step or two smaller, the same square holds
- * RIVIÈRE / DE / FRANCE: smaller type, and far quicker to read.
+ * RIVIÈRE / DE / FRANCE: smaller type, and far quicker to read. A break at a
+ * hyphen is different: the mark is on the page, so TEEN- / AGER costs nothing,
+ * and the widest thing that must stay together is a hyphen segment, not a word.
  */
 function unbrokenSize(ctx: CanvasRenderingContext2D, text: string, width: number): number {
   useFont(ctx, 100)
   let widest = 0
-  for (const word of text.split(/\s+/)) {
-    if (word) widest = Math.max(widest, ctx.measureText(word).width)
+  for (const token of wrapTokens(text)) {
+    widest = Math.max(widest, ctx.measureText(token.text).width)
   }
   return widest > 0 ? (width * 100) / widest : Infinity
 }
@@ -274,6 +306,14 @@ function measureShortened(
     unbrokenSize(ctx, candidate, boxW) >= size && lineCount(ctx, candidate, size, boxW) <= lines
 
   if (fitsWhole(text)) return { text, whole: true }
+
+  /*
+   * The whole text can also fit by splitting one long fragment across lines,
+   * with nothing lost to an ellipsis. Not as pretty as clean breaks — but the
+   * reader asked for the words, and a square showing PÉRI… with an empty line
+   * under it is the worst of both. Complete beats cut wherever there is room.
+   */
+  if (lineCount(ctx, text, size, boxW) <= lines) return { text, whole: true }
 
   // Longest run of whole words that still fits once the ellipsis is added.
   const words = text.split(/\s+/).filter(Boolean)
