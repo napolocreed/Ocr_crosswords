@@ -239,6 +239,36 @@ Il chiffre ce qui se dégrade en silence :
   la main sent, et la reprise une fois arrêté. Raccourcir une définition demande
   de mesurer du texte ; le faire à chaque image coûtait des images perdues.
 
+## Partager une grille
+
+Une grille scannée et corrigée se partage **par un simple lien**, sans aucun
+serveur : le puzzle entier (structure, définitions, flèches, mot mystère,
+difficulté) est compressé puis encodé dans le fragment `#g=…` de l'URL. Une
+grille 13 × 17 fait environ 2 à 3 Ko de lien — ce que toutes les messageries
+transmettent intact. Le fragment n'est jamais envoyé au serveur : GitHub Pages
+sert la page comme d'habitude, et la grille voyage de téléphone à téléphone.
+
+- **Envoyer** : bibliothèque → `⋯` sur la grille → *Partager le lien* (ou le
+  menu `⋯` de l'écran de jeu). La feuille de partage du téléphone s'ouvre ;
+  sans elle, le lien est copié.
+- **Recevoir** : ouvrir le lien. L'app affiche la grille proposée — taille,
+  nombre de définitions, difficulté — et demande avant d'ajouter. Une grille
+  déjà présente est reconnue et jamais écrasée.
+
+Ce qui **ne voyage pas** : la photo (volumineuse, et c'est une page de magazine
+sous droits) et la progression de l'expéditeur — la grille arrive vierge. La
+vignette est redessinée à partir de la forme de la grille.
+
+La **difficulté** se saisit à la relecture (onglet Structure), telle qu'imprimée
+sur la page du magazine ; elle s'affiche en badge dans la bibliothèque et dans
+la proposition d'ajout, pour savoir dans quoi on se lance quand la grille vient
+d'un ami.
+
+Limite à connaître : sur iPhone, une app installée sur l'écran d'accueil a un
+stockage séparé de Safari — un lien ouvert dans Safari ajoute la grille à la
+bibliothèque de Safari, pas à celle de l'app installée. Sur Android, les deux
+sont partagés et tout arrive au même endroit.
+
 ## Architecture
 
 ```

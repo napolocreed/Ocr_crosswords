@@ -237,6 +237,29 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
         </span>
       </div>
       <div className="toolbar" style={{ flexWrap: 'wrap' }}>
+        {/* The magazine prints its level next to the grid ("Fléchés Niveau 2/3"),
+            so this is asked here, while the page is still to hand. It mostly
+            matters to whoever receives the grid through a shared link. */}
+        <span className="muted" style={{ width: '100%', marginBottom: 4 }}>
+          Difficulté (indiquée sur la page du magazine)
+        </span>
+        <div className="seg" style={{ width: '100%', marginBottom: 10 }} data-role="difficulty">
+          {[1, 2, 3, 4].map((level) => (
+            <button
+              key={level}
+              type="button"
+              aria-pressed={puzzle.difficulty === level}
+              onClick={() =>
+                setPuzzle((current) => ({
+                  ...current,
+                  difficulty: current.difficulty === level ? undefined : level,
+                }))
+              }
+            >
+              {level}
+            </button>
+          ))}
+        </div>
         <span className="muted" style={{ width: '100%', marginBottom: 4 }}>
           Rogner une rangée en trop ({puzzle.cols} × {puzzle.rows})
         </span>

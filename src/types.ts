@@ -127,6 +127,13 @@ export interface Puzzle {
   cols: number
   /** rows × cols, row-major. */
   cells: Cell[]
+  /**
+   * Printed difficulty, 1 (easy) to 4 (expert) — the magazines' own scale
+   * ("Fléchés Niveau 2/3"). Optional. Its real audience is a friend receiving
+   * the grid through a shared link, who has not seen the magazine page and
+   * needs to know what they are letting themselves in for.
+   */
+  difficulty?: number
   /** Small JPEG data URL of the straightened grid, for the library list. */
   thumbnail?: string
   createdAt: number

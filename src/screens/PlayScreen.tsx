@@ -6,12 +6,14 @@ import { MysteryBar } from '../components/MysteryBar'
 import { usePlayState } from '../state/usePlayState'
 import { Sheet } from '../components/Sheet'
 import { mysteryPositions, readMysteryAnswer } from '../lib/puzzle'
+import { buildShareLink, offerShareLink } from '../lib/shareLink'
 
 interface Props {
   puzzle: Puzzle
   progress: Progress
   onBack: () => void
   onReview: () => void
+  onToast: (message: string) => void
 }
 
 /**
@@ -21,7 +23,7 @@ interface Props {
  * is printed inside a square at a size no phone can render legibly at fit-to-
  * screen zoom, so the active one is repeated here at a readable size.
  */
-export function PlayScreen({ puzzle, progress, onBack, onReview }: Props) {
+export function PlayScreen({ puzzle, progress, onBack, onReview, onToast }: Props) {
   const play = usePlayState(puzzle, progress)
   const [menuOpen, setMenuOpen] = useState(false)
   const [mysteryOpen, setMysteryOpen] = useState(false)
@@ -143,6 +145,22 @@ export function PlayScreen({ puzzle, progress, onBack, onReview }: Props) {
           >
             <span className="glyph">✎</span>
             Corriger la grille et les définitions
+          </button>
+          <button
+            type="button"
+            className="sheet-action"
+            onClick={async () => {
+              setMenuOpen(false)
+              try {
+                const outcome = await offerShareLink(await buildShareLink(puzzle), puzzle.title)
+                if (outcome === 'copied') onToast('Lien copié — colle-le à un ami')
+              } catch {
+                onToast('Partage impossible')
+              }
+            }}
+          >
+            <span className="glyph">🔗</span>
+            Partager cette grille
           </button>
           <button
             type="button"

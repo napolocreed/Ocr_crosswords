@@ -154,6 +154,14 @@ await check('OCR runs and reaches review', async () => {
 await shot('4-review-structure')
 
 console.log('\n5. review')
+await check('the difficulty printed on the page can be recorded', async () => {
+  // The review opens on the structure pass, where the difficulty chips live.
+  const chip = page.locator('[data-role=difficulty] button', { hasText: /^2$/ })
+  await chip.click()
+  if ((await chip.getAttribute('aria-pressed')) !== 'true') {
+    throw new Error('the chip did not take')
+  }
+})
 await check('definitions pass lists clues with crops', async () => {
   await page.getByRole('button', { name: /2\. Définitions/ }).click()
   await page.locator('.review-row').first().waitFor({ timeout: 10000 })
@@ -347,6 +355,70 @@ await check('pack export produces a downloadable file', async () => {
     throw new Error('unexpected pack contents')
   }
   console.log(`       ${file.suggestedFilename()}: ${pack.puzzles[0].cols}x${pack.puzzles[0].rows}, ${pack.progress?.length ?? 0} progress record(s)`)
+})
+
+/*
+ * The point of a shared library: a link built on one phone must hand the whole
+ * grid — difficulty included — to a friend's phone that has never seen it. The
+ * friend is a second browser context, i.e. genuinely empty storage.
+ */
+console.log('\n10. share by link')
+let shareUrl = ''
+await check('the grid menu builds a link and copies it', async () => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'], {
+    origin: 'http://localhost:4173',
+  })
+  // Exporting (section 9) already left selection mode on its own. The ⋯ span
+  // must be addressed by its exact label: the row button that CONTAINS it
+  // inherits its text into its own accessible name, so a loose match resolves
+  // to the row first — which opens the grid instead of the menu.
+  await page.locator('[aria-label^="Options de"]').click()
+  await page.getByRole('button', { name: 'Partager le lien' }).click()
+  await page.getByText('Lien copié').waitFor({ timeout: 10000 })
+  shareUrl = await page.evaluate(() => navigator.clipboard.readText())
+  if (!shareUrl.includes('#g=')) throw new Error(`not a share link: ${shareUrl.slice(0, 60)}`)
+  console.log(`       ${shareUrl.length} caractères d'URL`)
+})
+
+await check('a friend opening the link gets the grid, difficulty included', async () => {
+  const friend = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    deviceScaleFactor: 2,
+    isMobile: true,
+    hasTouch: true,
+    locale: 'fr-FR',
+  })
+  try {
+    const them = await friend.newPage()
+    await them.goto(shareUrl, { waitUntil: 'networkidle' })
+    await them.getByText('Grille partagée').waitFor({ timeout: 10000 })
+    const preview = await them.locator('.share-preview').innerText()
+    if (!/niveau 2\/4/i.test(preview)) throw new Error(`no difficulty in preview: ${preview}`)
+    await them.getByRole('button', { name: 'Ajouter à ma bibliothèque' }).click()
+    await them.locator('.library-item').first().waitFor({ timeout: 10000 })
+    const item = await them.locator('.library-item').first().innerText()
+    if (!/niv\. 2/i.test(item)) throw new Error(`no difficulty badge: ${item.replace(/\n/g, ' | ')}`)
+    // And it plays: the grid opens with its definitions, starting from blank.
+    await them.locator('.library-item').first().click()
+    await them.locator('.grid .cell.clue').first().waitFor({ timeout: 10000 })
+    const filled = await them.locator('.topbar .subtitle').first().innerText()
+    if (!/^0\//.test(filled.trim())) {
+      throw new Error(`a shared grid must arrive blank: ${filled.trim()}`)
+    }
+    await them.screenshot({ path: '.debug/smoke-10-shared.png' })
+  } finally {
+    await friend.close()
+  }
+})
+
+await check('the same link on the sender is recognised, not duplicated', async () => {
+  const before = await page.locator('.library-item').count()
+  await page.goto(shareUrl, { waitUntil: 'networkidle' })
+  await page.getByText('Grille partagée').waitFor({ timeout: 10000 })
+  await page.getByRole('button', { name: 'Ajouter à ma bibliothèque' }).click()
+  await page.getByText('Déjà dans ta bibliothèque').waitFor({ timeout: 10000 })
+  const after = await page.locator('.library-item').count()
+  if (after !== before) throw new Error(`library grew from ${before} to ${after}`)
 })
 
 await browser.close()

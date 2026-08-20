@@ -982,6 +982,19 @@ textarea:focus {
   margin: 0 0 12px;
 }
 
+/* Card summarising a grid that arrived by link, before it is accepted. */
+.share-preview {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+}
+
+.share-preview .title {
+  font-weight: 650;
+  margin-bottom: 2px;
+}
+
 .sheet-action {
   display: flex;
   align-items: center;

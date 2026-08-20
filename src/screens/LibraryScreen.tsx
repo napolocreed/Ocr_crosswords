@@ -3,6 +3,7 @@ import type { Progress, Puzzle } from '../types'
 import { progressRatio } from '../lib/puzzle'
 import { Sheet } from '../components/Sheet'
 import { buildPack, importPack, sharePack } from '../lib/exchange'
+import { buildShareLink, offerShareLink } from '../lib/shareLink'
 
 /**
  * The library: the grids you carry with you.
@@ -176,6 +177,7 @@ export function LibraryScreen({
                   })}
                 </div>
                 <div style={{ marginTop: 4, display: 'flex', gap: 6, alignItems: 'center' }}>
+                  {puzzle.difficulty && <span className="badge">niv. {puzzle.difficulty}</span>}
                   {!puzzle.reviewed && <span className="badge warn">à relire</span>}
                   {puzzle.mystery && puzzle.mystery.slots.length > 0 && (
                     <span className="badge">✦ mystère</span>
@@ -306,6 +308,23 @@ export function LibraryScreen({
               const puzzle = menuFor
               setMenuFor(null)
               try {
+                const outcome = await offerShareLink(await buildShareLink(puzzle), puzzle.title)
+                if (outcome === 'copied') onToast('Lien copié — colle-le à un ami')
+              } catch {
+                onToast('Partage impossible')
+              }
+            }}
+          >
+            <span className="glyph">🔗</span>
+            Partager le lien
+          </button>
+          <button
+            type="button"
+            className="sheet-action"
+            onClick={async () => {
+              const puzzle = menuFor
+              setMenuFor(null)
+              try {
                 await sharePack(await buildPack([puzzle.id], true))
                 onToast('Grille exportée')
               } catch {
@@ -314,7 +333,7 @@ export function LibraryScreen({
             }}
           >
             <span className="glyph">⤴</span>
-            Exporter cette grille
+            Exporter cette grille (fichier)
           </button>
           <button
             type="button"
