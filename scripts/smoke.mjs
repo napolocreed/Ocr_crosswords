@@ -242,20 +242,84 @@ await check('a merged reading can be cut back into two definitions', async () =>
   console.log(`       "${text.slice(0, 28)}…" cut at ${at}, ${before} -> ${after} rows`)
 })
 
+await shot('5-review-definitions')
+
+/*
+ * The arrows pass. Its reason to exist: a wrong arrow hides inside a
+ * confidently read definition, so arrows are flagged for their own reasons —
+ * deduced from geometry, or leading nowhere — in their own queue, and fixed
+ * with a picker that is permanently visible.
+ */
+console.log('\n5c. arrows')
+await check('arrows have their own queue, flagged for arrow reasons', async () => {
+  await page.getByRole('button', { name: /3\. Flèches/ }).click()
+  await page.locator('.arrow-row').first().waitFor({ timeout: 10000 })
+  const queueLabel = await page
+    .locator('.seg button', { hasText: 'À vérifier' })
+    .first()
+    .innerText()
+  const queued = Number(queueLabel.match(/\((\d+)\)/)?.[1] ?? 0)
+  // Every queued row must say WHY it is here, and the reason must be an arrow
+  // reason — never the text-confidence wording of the definitions pass.
+  const reasons = await page.locator('.arrow-row .concern').allInnerTexts()
+  if (queued === 0) throw new Error('no arrows queued — deduced arrows are not surfacing')
+  if (reasons.some((reason) => /lecture peu sûre|non lue/.test(reason))) {
+    throw new Error(`a text concern leaked into the arrows queue: ${reasons.join(' | ')}`)
+  }
+  console.log(`       ${queued} queued: ${[...new Set(reasons)].join(' · ') || '(sans motif visible)'}`)
+})
+
 await check('bent arrows are read from the page', async () => {
-  // Read the arrow off each row's chip. The four-way picker is no longer on every
-  // row — it opens on demand — so counting pressed buttons now counts nothing.
+  await page.locator('.seg button', { hasText: 'Toutes' }).first().click()
+  await page.waitForTimeout(300)
   // Both bent labels read "... puis ...", so one selector covers them.
-  const bent = await page.locator('.arrow-chip[aria-label*="puis"]').count()
-  const total = await page.locator('.arrow-chip').count()
+  const bent = await page
+    .locator('.arrow-row .arrow-picker button[aria-pressed="true"][aria-label*="puis"]')
+    .count()
+  const total = await page.locator('.arrow-row').count()
   console.log(`       ${bent} bent of ${total} definitions shown`)
   if (bent < 3) throw new Error(`expected several bent arrows, found ${bent}`)
 })
-await shot('5-review-definitions')
+
+await check('picking a direction fixes the arrow and ticks the row', async () => {
+  const row = page.locator('.arrow-row').first()
+  // Pin the target by its label before clicking: "first unpressed button" is a
+  // moving description, and it re-resolves to a different button once the click
+  // has made this one pressed.
+  const target = row.locator('.arrow-picker button:not([aria-pressed="true"])').first()
+  const label = await target.getAttribute('aria-label')
+  await target.click()
+  await page.waitForTimeout(200)
+  const picked = row.locator(`.arrow-picker button[aria-label="${label}"]`)
+  if ((await picked.getAttribute('aria-pressed')) !== 'true') {
+    throw new Error('the picked direction did not take')
+  }
+  if ((await row.locator('.tick').getAttribute('aria-pressed')) !== 'true') {
+    throw new Error('picking a direction should count as verifying the arrow')
+  }
+})
+
+await check('validating all arrows empties the arrows queue only', async () => {
+  await page.locator('.seg button', { hasText: 'À vérifier' }).first().click()
+  await page.waitForTimeout(200)
+  await page.getByRole('button', { name: /Tout valider/ }).click()
+  await page.waitForTimeout(300)
+  const queueLabel = await page
+    .locator('.seg button', { hasText: 'À vérifier' })
+    .first()
+    .innerText()
+  const left = Number(queueLabel.match(/\((\d+)\)/)?.[1] ?? -1)
+  if (left !== 0) throw new Error(`arrows queue still holds ${left}`)
+  // The subtitle keeps the two counts apart: arrows done, texts untouched.
+  const subtitle = await page.locator('.topbar .subtitle').innerText()
+  if (!/flèches vérifiées/.test(subtitle)) throw new Error(`subtitle: ${subtitle}`)
+  console.log(`       ${subtitle.trim()}`)
+})
+await shot('5c-review-arrows')
 
 console.log('\n5b. mystery word')
 await check('numbering squares builds the mystery answer', async () => {
-  await page.getByRole('button', { name: /3\. Mystère/ }).click()
+  await page.getByRole('button', { name: /4\. Mystère/ }).click()
   await page.locator('#mystery-clue').fill('Tropique, signe astrologique et coléoptère')
   // Tap three fillable squares, in order.
   const fillable = page.locator('.grid .cell:not(.clue):not(.block)')

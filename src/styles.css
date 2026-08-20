@@ -806,19 +806,6 @@ textarea:focus {
   line-height: 1;
 }
 
-/* An arrow that was deduced rather than read off the page. A hint, not an alarm:
-   it says where to look, and costs the reader nothing if they do not. */
-.arrow-chip.guessed {
-  border-color: var(--warn);
-  color: var(--warn);
-}
-
-.arrow-chip[aria-expanded='true'] {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-text);
-}
-
 /* The verb of this screen, so it reads as an invitation rather than as another
    piece of chrome — but never louder than the definition it is confirming. */
 .tick {
@@ -883,6 +870,29 @@ textarea:focus {
   font-size: 14px;
   font-weight: 550;
   color: var(--text-dim);
+}
+
+/* Four tabs across a phone: same control, tighter type. */
+.seg.tight button {
+  font-size: 12.5px;
+  padding: 0 2px;
+  white-space: nowrap;
+  position: relative;
+}
+
+/* A queue is waiting behind this tab. Cleared, the dot goes with it. */
+.seg-dot {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+.seg button[aria-pressed='true'] .seg-dot {
+  background: var(--accent-text);
 }
 
 .seg button[aria-pressed='true'] {
@@ -1053,6 +1063,40 @@ textarea:focus {
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+}
+
+/* An arrow that points at no square is wrong, not merely unverified. */
+.concern.danger {
+  color: var(--danger);
+  background: #3d1616;
+}
+
+/*
+ * The arrows pass: the definition is context, not the subject, so it is a
+ * caption rather than a field — and cannot be edited here, which is the whole
+ * separation. The picker sits inline because this pass exists to look at it.
+ */
+.arrow-row .clue-caption {
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--text-dim);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.arrow-picker.inline {
+  margin: 0;
+  flex: 1;
+  /* One line of four, whatever the row width: this is a picker, not a menu. */
+  flex-wrap: nowrap;
+}
+
+.arrow-picker.inline button {
+  min-width: 0;
+  height: 44px;
+  font-size: 18px;
 }
 
 /* The split escape hatch: present on every definition row, quiet until needed. */

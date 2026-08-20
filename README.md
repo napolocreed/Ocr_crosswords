@@ -13,9 +13,12 @@ les grilles ne quittent jamais l'appareil. Déployable sur GitHub Pages.
 
 - **Import par photo** — recadrage à 4 coins + rotation, détection de la grille, OCR français
   embarqué (Tesseract WASM).
-- **Relecture en deux passes** — d'abord la structure (type de chaque case, rognage des rangées
-  parasites), puis les définitions, chacune affichée **à côté du crop de la case d'origine** :
-  on corrige sans rouvrir le magazine.
+- **Relecture en passes séparées** — la structure (type de chaque case, rognage des rangées
+  parasites), puis les **textes**, puis les **flèches**, chaque élément affiché **à côté du
+  crop de la case d'origine** : on corrige sans rouvrir le magazine. Les flèches ont leur
+  propre file d'attente, signalée pour ses propres raisons (flèche déduite plutôt que lue,
+  réponse qui ne mène nulle part) — mélangées aux textes, les flèches fausses se cachaient
+  dans les définitions bien lues.
 - **Remplissage lettre par lettre** — clavier AZERTY intégré, grille zoomable, définition
   active rappelée en taille lisible.
 - **Mode brouillon** — jusqu'à 4 lettres candidates par case, affichées en petit et en gris

@@ -83,8 +83,16 @@ export interface Clue {
   confidence?: number
   /** 0–1 confidence in the arrow, which is a separate question from the text. */
   arrowConfidence?: number
-  /** True once a human has looked at this clue in the review screen. */
+  /** True once a human has looked at this clue's TEXT in the review screen. */
   reviewed?: boolean
+  /**
+   * True once a human has looked at this clue's ARROW, which is checked in its
+   * own pass. Kept apart from {@link reviewed} on purpose: text is verified by
+   * reading, arrows by comparing a glyph against the photo, and a wrong arrow
+   * hides comfortably inside a perfectly read definition. Older grids only have
+   * {@link reviewed}; readers treat it as covering both.
+   */
+  arrowReviewed?: boolean
 }
 
 /**

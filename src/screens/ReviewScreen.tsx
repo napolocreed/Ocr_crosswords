@@ -28,16 +28,20 @@ import { getAssets } from '../lib/db'
 import { holdReload } from '../lib/updateGuard'
 
 /**
- * The correction step, in two passes.
+ * The correction step, one pass per kind of mistake.
  *
- * *Structure* fixes what kind each square is and trims stray border rows — the
- * things detection gets wrong on a photo of a bound magazine. *Definitions* pairs
- * each OCR result with the crop it came from, which is the point of the whole
- * screen: you correct while looking at the printed text, without going back to
- * the magazine.
+ * *Grille* fixes what kind each square is and trims stray border rows — the
+ * things detection gets wrong on a photo of a bound magazine. *Définitions*
+ * pairs each OCR result with the crop it came from, so text is corrected while
+ * looking at the printed text. *Flèches* is deliberately its own pass: checking
+ * text and checking arrows are different acts — one is reading, the other is
+ * comparing a glyph against the photo — and while they shared a queue, the
+ * queue was ranked by TEXT confidence, so a wrong arrow sat invisible inside a
+ * confidently read definition. Each pass flags for its own reasons and keeps
+ * its own per-clue tick.
  */
 
-type Pass = 'structure' | 'definitions' | 'mystery'
+type Pass = 'structure' | 'definitions' | 'arrows' | 'mystery'
 
 interface Props {
   puzzle: Puzzle
@@ -46,10 +50,10 @@ interface Props {
 }
 
 /**
- * Arrow confidence below which the row shows that the arrow was deduced rather
- * than read. A hint, not a flag: it colours the chip and nothing more.
+ * Arrow confidence below which the arrow joins the arrows-pass queue: it was
+ * deduced from geometry rather than read off the page, and deserves a glance.
  */
-const ARROW_HINT_THRESHOLD = 0.6
+const ARROW_REVIEW_THRESHOLD = 0.6
 
 /**
  * The definition field: a textarea that grows to its content rather than an input
@@ -100,10 +104,8 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
   const [pass, setPass] = useState<Pass>('structure')
   const [assets, setAssets] = useState<PuzzleAssets | null>(null)
   const [onlyFlagged, setOnlyFlagged] = useState(true)
+  const [onlyFlaggedArrows, setOnlyFlaggedArrows] = useState(true)
   const [zoomed, setZoomed] = useState<string | null>(null)
-  /** Which row has its arrow picker open. Only one at a time: four buttons on
-   *  every row is a wall, and the arrow is right far more often than not. */
-  const [openArrow, setOpenArrow] = useState<string | null>(null)
   /**
    * Where the caret last sat, and in which definition. A ref rather than state so
    * that moving it does not re-render sixty rows; tagged with the clue it came
@@ -138,50 +140,56 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
   const clues = useMemo(() => allClues(puzzle), [puzzle])
 
   /**
-   * Why a definition wants attention. An answer of one letter or none is the
-   * strongest signal available that a square was mistaken for a definition when
-   * it is not one: a real arrowword answer is at least two letters, so this
-   * catches structural errors that the OCR confidence cannot see.
+   * Why a definition's TEXT wants attention: unread, or read without confidence.
+   * Nothing here is about the arrow — that has its own pass, its own reasons.
    */
-  const concernOf = useMemo(() => {
+  const textConcernOf = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const { clue } of clues) {
+      if (!clue.text) map.set(clue.id, 'non lue')
+      else if ((clue.confidence ?? 0) < REVIEW_THRESHOLD) map.set(clue.id, 'lecture peu sûre')
+    }
+    return map
+  }, [clues])
+
+  /**
+   * Why an ARROW wants attention. Where the answer lands is the arrow's doing,
+   * so the structural signals live here: an answer of no letters means the
+   * arrow points at nothing, one letter is barely more plausible — both are the
+   * strongest evidence available that the arrow (or the square) is wrong. And a
+   * low arrow confidence means the glyph was deduced from geometry rather than
+   * read off the page. These used to be mixed into a single queue ranked by
+   * TEXT confidence, where a wrong arrow hid inside a well-read definition.
+   */
+  const arrowConcernOf = useMemo(() => {
     const map = new Map<string, string>()
     for (const { clue } of clues) {
       const word = index.byId.get(clue.id)
       if (!word || word.cells.length === 0) map.set(clue.id, 'ne mène nulle part')
       else if (word.cells.length === 1) map.set(clue.id, 'réponse d’une seule lettre')
-      else if (!clue.text) map.set(clue.id, 'non lue')
-      else if ((clue.confidence ?? 0) < REVIEW_THRESHOLD) map.set(clue.id, 'lecture peu sûre')
+      else if ((clue.arrowConfidence ?? 0) < ARROW_REVIEW_THRESHOLD) {
+        map.set(clue.id, 'déduite, pas lue sur la photo')
+      }
     }
     return map
   }, [clues, index])
 
-  /*
-   * A deduced arrow is worth showing but not worth stopping for.
-   *
-   * It used to be: the arrow's confidence was folded into the clue's, so a square
-   * whose arrow had to be inferred from geometry — routine — put a perfectly read
-   * definition in the queue. That is where most of the queue came from.
-   *
-   * Leaving it out is safe because an arrow that is actually wrong shows itself
-   * some other way: it points at a square nothing can reach, and orphans are
-   * flagged on their own and drawn in red in the structure pass. A merely
-   * uncertain arrow is not evidence of a mistake, and the crop beside it now
-   * reaches far enough past the square to show the printed glyph, so confirming
-   * one is a glance rather than a task.
-   */
-  const deduced = useMemo(() => {
-    const set = new Set<string>()
-    for (const { clue } of clues) {
-      if (!clue.reviewed && (clue.arrowConfidence ?? 1) < ARROW_HINT_THRESHOLD) set.add(clue.id)
-    }
-    return set
-  }, [clues])
+  /** Older grids carry one flag for both; treat their tick as covering the arrow. */
+  const arrowOk = (clue: (typeof clues)[number]['clue']) =>
+    clue.arrowReviewed ?? clue.reviewed ?? false
 
   const flagged = useMemo(
-    () => clues.filter(({ clue }) => !clue.reviewed && concernOf.has(clue.id)),
-    [clues, concernOf],
+    () => clues.filter(({ clue }) => !clue.reviewed && textConcernOf.has(clue.id)),
+    [clues, textConcernOf],
   )
   const visibleClues = onlyFlagged && flagged.length > 0 ? flagged : clues
+
+  const arrowFlagged = useMemo(
+    () => clues.filter(({ clue }) => !arrowOk(clue) && arrowConcernOf.has(clue.id)),
+    [clues, arrowConcernOf],
+  )
+  const visibleArrowClues =
+    onlyFlaggedArrows && arrowFlagged.length > 0 ? arrowFlagged : clues
 
   /* ------------------------------------------------------------- structure */
 
@@ -330,10 +338,8 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
       {visibleClues.map(({ r, c, clue }) => {
         // Older imports filed crops by coordinate; fall back so they still show.
         const crop = assets?.crops[clue.id] ?? assets?.crops[cellKey(r, c)]
-        const concern = concernOf.get(clue.id)
-        const word = index.byId.get(clue.id)
+        const concern = textConcernOf.get(clue.id)
         const count = cellAt(puzzle, r, c)?.clues?.length ?? 1
-        const open = openArrow === clue.id
         return (
           <div
             key={clue.id}
@@ -354,7 +360,8 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
               <div className="crop crop-missing" />
             )}
             <div className="fields">
-              {/* The definition is the subject, so it comes first and largest. */}
+              {/* The definition is the subject, so it comes first and largest.
+                  Nothing about the arrow appears here: it has its own pass. */}
               <ClueField
                 value={clue.text}
                 onChange={(text) => setPuzzle(updateClue(puzzle, clue.id, { text }))}
@@ -362,20 +369,8 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
                 onCaret={(at) => (caret.current = { id: clue.id, at })}
               />
               <div className="row-meta">
-                {/* The arrow is one tap to confirm and two to change, rather than
-                    four permanent buttons on every row. */}
-                <button
-                  type="button"
-                  className={`arrow-chip${deduced.has(clue.id) ? ' guessed' : ''}`}
-                  aria-expanded={open}
-                  aria-label={`Flèche : ${ARROW_LABEL[clue.arrow]}`}
-                  onClick={() => setOpenArrow(open ? null : clue.id)}
-                >
-                  {ARROW_GLYPH[clue.arrow]}
-                </button>
                 <span className="position">
                   L{r + 1}·C{c + 1}
-                  {word ? ` · ${word.cells.length} lettre${word.cells.length > 1 ? 's' : ''}` : ''}
                 </span>
                 {concern && !clue.reviewed && <span className="concern">{concern}</span>}
                 <span className="spacer" />
@@ -391,25 +386,6 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
                   ✓
                 </button>
               </div>
-              {open && (
-                <div className="arrow-picker">
-                  {ARROW_KINDS.map((arrow) => (
-                    <button
-                      key={arrow}
-                      type="button"
-                      aria-pressed={clue.arrow === arrow}
-                      title={ARROW_LABEL[arrow]}
-                      aria-label={ARROW_LABEL[arrow]}
-                      onClick={() => {
-                        setPuzzle(updateClue(puzzle, clue.id, { arrow, reviewed: true }))
-                        setOpenArrow(null)
-                      }}
-                    >
-                      {ARROW_GLYPH[arrow]}
-                    </button>
-                  ))}
-                </div>
-              )}
               {/* Out where it can be seen. A missed hairline is the one error the
                   reader cannot work around by editing, so the way out of it must
                   not be behind another control. */}
@@ -440,6 +416,134 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
                   ⇩ Couper en deux au curseur
                 </button>
               )}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+
+  /* ---------------------------------------------------------------- arrows */
+
+  /*
+   * Checking an arrow is one comparison: the printed glyph in the photo against
+   * the four possible directions. So the crop is the biggest thing in the row —
+   * it reaches past the square into the neighbouring cells, which is where the
+   * magazine prints the arrow — and the four choices are permanent buttons, not
+   * a popover: this pass exists to look at them, hiding them would be backwards.
+   * Choosing a direction IS verifying it, so picking one also ticks the row.
+   */
+  const arrowsPass = (
+    <div className="scroll">
+      <div className="seg" style={{ marginBottom: 12 }}>
+        <button
+          type="button"
+          aria-pressed={onlyFlaggedArrows}
+          onClick={() => setOnlyFlaggedArrows(true)}
+        >
+          À vérifier ({arrowFlagged.length})
+        </button>
+        <button
+          type="button"
+          aria-pressed={!onlyFlaggedArrows}
+          onClick={() => setOnlyFlaggedArrows(false)}
+        >
+          Toutes ({clues.length})
+        </button>
+      </div>
+
+      {visibleArrowClues.length === 0 && (
+        <div className="empty">
+          <h2>Rien à vérifier</h2>
+          <p>Toutes les flèches ont été lues sur la photo avec un bon niveau de confiance.</p>
+        </div>
+      )}
+
+      {visibleArrowClues.length > 0 && (
+        <button
+          type="button"
+          className="btn wide accept-all"
+          onClick={() =>
+            setPuzzle(
+              visibleArrowClues.reduce(
+                (next, { clue }) => updateClue(next, clue.id, { arrowReviewed: true }),
+                puzzle,
+              ),
+            )
+          }
+        >
+          ✓ Tout valider ({visibleArrowClues.filter(({ clue }) => !arrowOk(clue)).length})
+        </button>
+      )}
+
+      {visibleArrowClues.map(({ r, c, clue }) => {
+        const crop = assets?.crops[clue.id] ?? assets?.crops[cellKey(r, c)]
+        const concern = arrowConcernOf.get(clue.id)
+        const ok = arrowOk(clue)
+        const word = index.byId.get(clue.id)
+        const landsNowhere = !word || word.cells.length === 0
+        return (
+          <div
+            key={clue.id}
+            className={
+              'review-row arrow-row' +
+              (concern && !ok ? ' flagged' : '') +
+              (ok ? ' done' : '')
+            }
+          >
+            {crop ? (
+              <img
+                className="crop"
+                src={crop}
+                alt={`Case ligne ${r + 1}, colonne ${c + 1}`}
+                onClick={() => setZoomed(crop)}
+              />
+            ) : (
+              <div className="crop crop-missing" />
+            )}
+            <div className="fields">
+              {/* Read-only here on purpose: this pass is about the arrow, and the
+                  text is only shown so you know which definition you are on. */}
+              <div className="clue-caption">{clue.text || 'Définition non lue'}</div>
+              <div className="row-meta">
+                <div className="arrow-picker inline">
+                  {ARROW_KINDS.map((arrow) => (
+                    <button
+                      key={arrow}
+                      type="button"
+                      aria-pressed={clue.arrow === arrow}
+                      title={ARROW_LABEL[arrow]}
+                      aria-label={ARROW_LABEL[arrow]}
+                      onClick={() =>
+                        setPuzzle(updateClue(puzzle, clue.id, { arrow, arrowReviewed: true }))
+                      }
+                    >
+                      {ARROW_GLYPH[arrow]}
+                    </button>
+                  ))}
+                </div>
+                <span className="spacer" />
+                <button
+                  type="button"
+                  className="tick"
+                  aria-pressed={ok}
+                  aria-label={ok ? 'Flèche vérifiée' : 'Marquer la flèche comme vérifiée'}
+                  onClick={() => setPuzzle(updateClue(puzzle, clue.id, { arrowReviewed: !ok }))}
+                >
+                  ✓
+                </button>
+              </div>
+              <div className="row-meta">
+                <span className="position">
+                  L{r + 1}·C{c + 1}
+                  {word && word.cells.length > 0
+                    ? ` · réponse de ${word.cells.length} lettre${word.cells.length > 1 ? 's' : ''}`
+                    : ''}
+                </span>
+                {concern && !ok && (
+                  <span className={`concern${landsNowhere ? ' danger' : ''}`}>{concern}</span>
+                )}
+              </div>
             </div>
           </div>
         )
@@ -541,8 +645,10 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
               ? // Progress, not a repeat of the filter's own count: the reader
                 // wants to know how much is left, and the tab already says how
                 // many are flagged.
-                `${clues.filter(({ clue }) => clue.reviewed).length} / ${clues.length} vérifiées`
-              : `${assigned} case(s) numérotée(s)`}
+                `${clues.filter(({ clue }) => clue.reviewed).length} / ${clues.length} textes vérifiés`
+              : pass === 'arrows'
+                ? `${clues.filter(({ clue }) => arrowOk(clue)).length} / ${clues.length} flèches vérifiées`
+                : `${assigned} case(s) numérotée(s)`}
           </span>
         </h1>
         <button
@@ -556,32 +662,50 @@ export function ReviewScreen({ puzzle: initial, onSave, onCancel }: Props) {
       </div>
 
       <div style={{ padding: '10px 12px 0' }}>
-        <div className="seg">
+        <div className="seg tight">
           <button
             type="button"
             aria-pressed={pass === 'structure'}
             onClick={() => setPass('structure')}
           >
-            1. Structure
+            1. Grille
           </button>
+          {/* The dot says "this pass still has a queue" from any tab — the whole
+              point of separate passes is lost if one can be left unvisited
+              without noticing. */}
           <button
             type="button"
             aria-pressed={pass === 'definitions'}
             onClick={() => setPass('definitions')}
           >
             2. Définitions
+            {flagged.length > 0 && <span className="seg-dot" aria-hidden="true" />}
+          </button>
+          <button
+            type="button"
+            aria-pressed={pass === 'arrows'}
+            onClick={() => setPass('arrows')}
+          >
+            3. Flèches
+            {arrowFlagged.length > 0 && <span className="seg-dot" aria-hidden="true" />}
           </button>
           <button
             type="button"
             aria-pressed={pass === 'mystery'}
             onClick={() => setPass('mystery')}
           >
-            3. Mystère
+            4. Mystère
           </button>
         </div>
       </div>
 
-      {pass === 'structure' ? structurePass : pass === 'mystery' ? mysteryPass : definitionsPass}
+      {pass === 'structure'
+        ? structurePass
+        : pass === 'arrows'
+          ? arrowsPass
+          : pass === 'mystery'
+            ? mysteryPass
+            : definitionsPass}
 
       {zoomed && (
         <div
