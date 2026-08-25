@@ -395,6 +395,52 @@ la grille commence à x=85), et livrées à elles-mêmes elles se calent sur le 
 page et la reliure. La seconde photo y perdait tout son accord de cadre (0,83 →
 0,77) et trois cases-définitions.
 
+## Indices et solutions : l'état de la question
+
+Le projet vise des jokers — 5 à 10 « indices » qui révèlent une lettre, 1 à 3 « solutions » qui
+révèlent un mot. Une grille arrive ici par la photo d'un magazine : l'app connaît les
+définitions et le nombre de cases, **jamais les réponses**. Un joker doit donc puiser dans un
+corrigé, et ce corrigé doit exister avant que le joueur ne voie quoi que ce soit — sinon
+l'aider revient à lui montrer le mot entier, et le joker « une lettre » perd tout son sens.
+
+Reste à savoir d'où vient ce corrigé. Les sites français de solutions (FSolver, CommeUneFleche,
+Motscroises.fr, Dico-Mots…) sont nombreux, mais aucun ne publie d'API, et dCode refuse
+explicitement l'accès programmatique. Il y a exactement quatre issues, et le choix entre elles
+n'est pas une question d'opinion :
+
+1. **Un site renvoie un en-tête CORS permissif** — la PWA l'appelle directement, GitHub Pages
+   suffit, la promesse « aucun serveur » tient.
+2. **Un site publie un sitemap listant une page par définition** — on en tire un jeu de données
+   hors-ligne une bonne fois, et GitHub Pages suffit encore.
+3. **Le site répond mais sans CORS** — il faut un relais côté serveur, donc renoncer au
+   « 100 % local ».
+4. **Rien de tout ça** — le corrigé se saisit ou s'importe à la main.
+
+`scripts/probe-solvers.py` tranche entre ces quatre issues par la mesure. Il sonde quinze sites
+et, pour chacun, relève la joignabilité, ce que `robots.txt` autorise et le `Crawl-delay`
+demandé, la taille du sitemap, les en-têtes CORS (requête simple *et* préflight), les
+formulaires de recherche réellement présents dans la page — plutôt que des URL devinées — puis
+il interroge chaque site sur quatre définitions dont la réponse est connue d'avance et vérifie
+qu'elle figure bien dans le HTML reçu. Il joint un extrait du HTML autour de chaque réponse
+trouvée : c'est ce qui permet d'écrire le parseur ensuite.
+
+```bash
+python3 scripts/probe-solvers.py            # scan complet, ~20 min
+python3 scripts/probe-solvers.py --only fsolver
+python3 scripts/probe-solvers.py --list
+```
+
+Bibliothèque standard uniquement, aucune dépendance : il tourne tel quel sur un téléphone
+(Pydroid 3, bouton ▶), ce qui est le seul moyen de le lancer depuis une connexion non filtrée.
+Il produit `rapport-solveurs.md`, `rapport-solveurs.json` et les pages brutes.
+
+Le volume est délibérément minuscule — quelques dizaines de requêtes, deux secondes entre
+chacune, `robots.txt` respecté, agent identifiable. C'est une évaluation de faisabilité, pas une
+aspiration de contenu. Le Wiktionnaire, dont l'API autorise CORS, sert de témoin : si le script
+ne détecte pas CORS **là**, c'est le détecteur qui est en cause et les autres verdicts ne valent
+rien. Quand aucun site ne répond, le rapport le dit et refuse de conclure, au lieu de faire
+passer une panne de réseau pour une absence de source.
+
 ## Limites connues
 
 - **L'orientation ne se détecte de façon fiable que sur une page à plat.** Mesuré dans les
