@@ -443,6 +443,15 @@ Bibliothèque standard uniquement, aucune dépendance : il tourne tel quel sur u
 (Pydroid 3, bouton ▶), ce qui est le seul moyen de le lancer depuis une connexion non filtrée.
 Il produit `rapport-solveurs.md`, `rapport-solveurs.json` et les pages brutes.
 
+**Où le rapport atterrit** compte autant que son contenu. Sur Android le stockage partagé passe
+avant le dossier du script (`Download/sonde-mots-fleches/`), parce que le dossier du script est
+celui de Pydroid — `/data/user/0/ru.iiec.pydroid3/files`, parfaitement inscriptible et
+parfaitement invisible depuis le gestionnaire de fichiers. Un premier rapport y a été écrit puis
+perdu faute de pouvoir l'atteindre. Quand seul ce dossier privé est disponible, le script
+n'insiste pas : il affiche le rapport entier dans le terminal, entre deux repères, prêt à copier
+— on ne peut pas compter sur une option en ligne de commande quand l'appareil n'a qu'un bouton ▶
+(`--print` force cet affichage partout ailleurs).
+
 **Il est écrit pour être interrompu.** Le rapport est réécrit à chaque étape — pas à la fin — par
 fichier temporaire puis renommage, si bien qu'une veille d'écran ou une coupure ne coûte rien de
 ce qui a déjà été mesuré ; le fichier porte alors un bandeau « rapport partiel » plutôt que de se

@@ -1486,19 +1486,64 @@ def markdown(reports: list[dict], meta: dict) -> str:
 # Entrée
 # --------------------------------------------------------------------------- #
 
+OUT_FOLDER = "sonde-mots-fleches"
+
+
+def on_android() -> bool:
+    return bool(os.environ.get("ANDROID_ROOT") or os.environ.get("ANDROID_DATA")) or any(
+        os.path.isdir(path) for path in ("/storage/emulated/0", "/sdcard"))
+
+
+def writable(path: str) -> bool:
+    try:
+        os.makedirs(path, exist_ok=True)
+        witness = os.path.join(path, ".probe-write-test")
+        with open(witness, "w") as handle:
+            handle.write("ok")
+        os.remove(witness)
+        return True
+    except Exception:
+        return False
+
+
+SHARED_ANDROID_DIRS = (
+    "/storage/emulated/0/Download", "/sdcard/Download",
+    "/storage/emulated/0/Documents", "/storage/emulated/0", "/sdcard",
+)
+
+
+def out_candidates(android: bool, here: str) -> list[str]:
+    """
+    Les dossiers de sortie, du plus souhaitable au dernier recours.
+
+    Sur Android le stockage partagé passe **avant** le dossier du script, et
+    c'est tout l'enjeu : celui du script est celui de Pydroid,
+    `/data/user/0/ru.iiec.pydroid3/files`, parfaitement inscriptible et
+    parfaitement invisible depuis le gestionnaire de fichiers. Un premier
+    rapport y a été écrit puis perdu faute de pouvoir l'atteindre.
+    """
+    fallbacks = [here, os.path.expanduser("~"), os.getcwd()]
+    if not android:
+        return fallbacks
+    # Un sous-dossier nommé, pour qu'il se retrouve au milieu des téléchargements.
+    return [os.path.join(base, OUT_FOLDER) for base in SHARED_ANDROID_DIRS] + fallbacks
+
+
+def is_private_android_dir(path: str) -> bool:
+    """Le dossier privé d'une appli Android : inscriptible, mais inatteignable."""
+    return path.startswith("/data/")
+
+
 def default_out() -> str:
-    """Un dossier inscriptible, sur Android comme ailleurs."""
     here = os.path.dirname(os.path.abspath(sys.argv[0] or "."))
-    for candidate in (here, os.path.expanduser("~"), "/sdcard/Download", os.getcwd()):
-        try:
-            os.makedirs(candidate, exist_ok=True)
-            probe = os.path.join(candidate, ".probe-write-test")
-            with open(probe, "w") as handle:
-                handle.write("ok")
-            os.remove(probe)
-            return candidate
-        except Exception:
+    for candidate in out_candidates(on_android(), here):
+        # Ne pas créer `/sdcard/…` sur une machine qui n'en a pas : le parent
+        # doit déjà exister pour que le candidat soit pris au sérieux.
+        parent = os.path.dirname(candidate.rstrip("/"))
+        if parent and not os.path.isdir(parent):
             continue
+        if writable(candidate):
+            return candidate
     return os.getcwd()
 
 
@@ -1560,6 +1605,9 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--ignore-robots", action="store_true",
                         help="ne pas tenir compte de robots.txt (déconseillé)")
     parser.add_argument("--out", default="", help="dossier de sortie")
+    parser.add_argument("--print", "--print-report", dest="print_report", action="store_true",
+                        help="afficher le rapport entier dans le terminal à la fin, pour "
+                             "pouvoir le copier quand le fichier n'est pas atteignable")
     args = parser.parse_args(argv)
 
     if args.list:
@@ -1570,6 +1618,23 @@ def main(argv: list[str]) -> int:
 
     args.out = args.out or default_out()
     os.makedirs(args.out, exist_ok=True)
+
+    # Un rapport écrit dans le dossier privé de l'appli n'existe pas pour son
+    # lecteur : Android ne le montre nulle part. Mieux vaut le dire tout de
+    # suite que de le laisser découvrir le scan terminé.
+    unreachable = is_private_android_dir(args.out)
+    if unreachable:
+        # Et on l'affiche d'office. Sur un téléphone on appuie sur ▶, on ne passe
+        # pas d'options : compter sur un drapeau que le lecteur ne peut pas taper
+        # reviendrait à ne rien livrer du tout.
+        args.print_report = True
+        print("")
+        print("⚠️  Le seul dossier inscriptible est le dossier PRIVÉ de l'appli, invisible")
+        print("    depuis le gestionnaire de fichiers Android. Le rapport sera donc AFFICHÉ")
+        print("    ICI à la fin, prêt à copier.")
+        print("    Pour l'avoir en fichier : Réglages Android → Applications → Pydroid 3 →")
+        print("    Autorisations → Fichiers, puis relancer.")
+        print("")
 
     chosen = list(SITES)
     if args.only:
@@ -1676,7 +1741,15 @@ def main(argv: list[str]) -> int:
         kind, why = classify(report)
         print("  %-28s %-18s %s" % (report.get("name", report.get("id")), BADGE.get(kind, kind), why))
     print("")
-    print("Envoie-moi rapport-solveurs.md (ou colle-le) et j'écris l'intégration.")
+    if args.print_report:
+        print("Copie tout ce qui suit, entre les deux repères.")
+        print("")
+        print("<<<<<<<<<< DÉBUT DU RAPPORT >>>>>>>>>>")
+        print(markdown(reports, meta))
+        print("<<<<<<<<<< FIN DU RAPPORT >>>>>>>>>>")
+        print("")
+    else:
+        print("Envoie-moi rapport-solveurs.md (ou colle-le) et j'écris l'intégration.")
     return 0
 
 
