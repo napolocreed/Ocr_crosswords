@@ -418,11 +418,20 @@ n'est pas une question d'opinion :
 
 `scripts/probe-solvers.py` tranche entre ces quatre issues par la mesure. Il sonde quinze sites
 et, pour chacun, relève la joignabilité, ce que `robots.txt` autorise et le `Crawl-delay`
-demandé, la taille du sitemap, les en-têtes CORS (requête simple *et* préflight), les
-formulaires de recherche réellement présents dans la page — plutôt que des URL devinées — puis
-il interroge chaque site sur quatre définitions dont la réponse est connue d'avance et vérifie
-qu'elle figure bien dans le HTML reçu. Il joint un extrait du HTML autour de chaque réponse
-trouvée : c'est ce qui permet d'écrire le parseur ensuite.
+demandé, la taille réelle des sitemaps — index déroulé d'un cran, parce que « 18 URL » sur un
+index ce sont dix-huit sous-sitemaps et pas dix-huit pages — et les en-têtes CORS, en requête
+simple *et* en préflight.
+
+Pour interroger un site, il n'invente pas d'URL : il lit les formulaires réellement présents
+dans les pages, et **déduit la forme des URL des liens du site lui-même** (`/solution/{slug}`,
+`/definition/{slug}/{n}`…) avant de la réessayer avec la définition cherchée. Ce dernier point
+est né d'un échec : au premier scan, le seul site autorisant CORS — donc le seul capable de
+dispenser d'un serveur — est passé à travers parce qu'il n'expose aucun formulaire et qu'aucune
+URL devinée de l'extérieur ne tombait juste.
+
+Il interroge ensuite chaque site sur quatre définitions dont la réponse est connue d'avance et
+vérifie qu'elle figure bien dans le HTML reçu, en joignant un extrait du HTML autour de chaque
+réponse trouvée : c'est ce qui permet d'écrire le parseur ensuite.
 
 ```bash
 python3 scripts/probe-solvers.py            # scan complet, ~3 min
@@ -442,7 +451,8 @@ réutilisant que les sites menés à leur terme et que si le rapport vient de la
 script (`--fresh` pour tout refaire). Un site qui répond sans jamais avoir la solution est
 abandonné au bout de trois essais : ceux qui ont la réponse la donnent tout de suite ou une fois
 sur deux, et insister sur les autres coûtait plus que tout le reste du scan. L'abandon est écrit
-dans le rapport, jamais silencieux.
+dans le rapport, jamais silencieux — et **un site qui autorise CORS n'est jamais abandonné**,
+puisque c'est le seul type capable de rendre le serveur inutile.
 
 Le volume reste petit — quelques dizaines de requêtes par site, une demi-seconde entre chacune,
 `robots.txt` et son `Crawl-delay` respectés, agent identifiable. C'est une évaluation de

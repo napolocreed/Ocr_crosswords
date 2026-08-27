@@ -158,11 +158,13 @@ SITES: tuple[Site, ...] = (
             "https://www.fsolver.fr/dictionnaire-mots-croises-gratuit.php",
         ),
         templates=(
+            # Mesuré : les deux répondent, sur les quatre définitions. En
+            # revanche `/mots-croises/…` renvoie 404 — il n'existe pas.
             "https://www.fsolver.fr/mots-fleches/{star}",
             "https://www.fsolver.fr/mots-fleches/{stars}",
-            "https://www.fsolver.fr/mots-croises/{stars}",
         ),
-        note="Annonce ~540 000 mots. Ses pages de résultats sont déjà groupées par longueur.",
+        note="Annonce ~540 000 mots. Répond aux 4 définitions d'essai, résultats groupés "
+             "par longueur. Pas de CORS.",
     ),
     Site(
         id="commeunefleche",
@@ -178,7 +180,7 @@ SITES: tuple[Site, ...] = (
             "https://commeunefleche.com/{slug}",
             "https://commeunefleche.com/{slug}-1",
         ),
-        note="Une page par définition, donc potentiellement énumérable par sitemap.",
+        note="Pages rendues par le navigateur : le HTML servi est vide, un fetch n'y verra rien.",
     ),
     Site(
         id="motscroises-fr",
@@ -188,7 +190,10 @@ SITES: tuple[Site, ...] = (
             "https://www.motscroises.fr/?s={plus}",
             "https://www.motscroises.fr/recherche/{slug}",
         ),
-        note="Annonce 80 000 définitions et 540 000 solutions.",
+        note="Annonce 80 000 définitions et 540 000 solutions. **Le seul site mesuré qui "
+             "renvoie un en-tête CORS couvrant l'origine GitHub Pages** — donc le seul qui "
+             "dispenserait d'un serveur. Reste à trouver son URL de recherche : ni formulaire, "
+             "ni gabarit deviné n'a fonctionné au premier scan.",
     ),
     Site(
         id="dico-mots",
@@ -202,16 +207,22 @@ SITES: tuple[Site, ...] = (
         name="Mots-Croises.ch",
         home="https://www.mots-croises.ch/",
         search_pages=("https://www.mots-croises.ch/Recherche/mots-croises.htm",),
-        note="Dictionnaire suisse, inclut noms propres et formes fléchies.",
+        note="Dictionnaire suisse, noms propres et formes fléchies compris. Répond aux 4 "
+             "définitions d'essai via son formulaire, mais ses pages ne portent aucun "
+             "marqueur de longueur : la longueur devra se déduire des mots eux-mêmes. "
+             "Pas de CORS.",
     ),
     Site(
         id="solutions-mots-fleches",
         name="Solutions-Mots-Fleches",
         home="https://www.solutions-mots-fleches.com/",
         templates=(
-            "https://www.solutions-mots-fleches.com/?s={plus}",
+            # `/{slug}` d'abord : c'est celui qui a répondu, avec une page très
+            # riche en « N lettres ». `?s=` répond 200 mais sans la solution.
             "https://www.solutions-mots-fleches.com/{slug}",
+            "https://www.solutions-mots-fleches.com/?s={plus}",
         ),
+        note="Une page par définition, pages denses en marqueurs de longueur. Pas de CORS.",
     ),
     Site(
         id="mots-croises-solutions",
@@ -389,6 +400,78 @@ ENDPOINT_RE = re.compile(
     re.I,
 )
 SCRIPT_SRC_RE = re.compile(r"<script[^>]+src=[\"']([^\"']+)[\"']", re.I)
+LINK_RE = re.compile(r"<a\b[^>]+href=[\"']([^\"'#][^\"']*)[\"']", re.I)
+
+# Trois tirets ou plus, ou un segment très long : ce n'est plus une rubrique,
+# c'est une expression transformée en URL — donc probablement une définition.
+SLUG_SEG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+){2,}$")
+
+
+def path_shape(path: str) -> str:
+    """
+    `/solution/fleuve-d-egypte/3` → `/solution/{slug}/{n}`.
+
+    Un site de solutions a forcément une forme d'URL par définition. La deviner
+    de l'extérieur ne marche pas — le premier scan l'a montré : le seul site qui
+    autorisait CORS est celui dont je n'ai pas trouvé la recherche. La lire dans
+    ses propres liens, si.
+    """
+    out = []
+    for segment in path.strip("/").split("/"):
+        if not segment:
+            continue
+        if segment.isdigit():
+            out.append("{n}")
+        elif SLUG_SEG_RE.match(segment) or len(segment) > 24:
+            out.append("{slug}")
+        else:
+            out.append(segment)
+    return "/" + "/".join(out)
+
+
+def link_shapes(markup: str, base_url: str, limit: int = 14) -> list[dict]:
+    """Formes d'URL internes, les plus fréquentes d'abord, avec un exemple."""
+    root = "%s://%s" % urlparse.urlsplit(base_url)[:2]
+    counts: dict[str, int] = {}
+    examples: dict[str, str] = {}
+    for href in LINK_RE.findall(markup):
+        absolute = urlparse.urljoin(base_url, href)
+        if not absolute.startswith(root):
+            continue
+        split = urlparse.urlsplit(absolute)
+        if not split.path or split.path == "/":
+            continue
+        shape = path_shape(split.path)
+        counts[shape] = counts.get(shape, 0) + 1
+        examples.setdefault(shape, absolute)
+    ranked = sorted(counts.items(), key=lambda item: -item[1])
+    return [{"shape": s, "count": n, "example": examples[s]} for s, n in ranked[:limit]]
+
+
+def derive_templates(urls: list[str], limit: int = 4) -> list[dict]:
+    """
+    Transforme des URL observées en gabarits interrogeables.
+
+    Un lien vers `/definition/astre-du-jour` dit tout : le même chemin avec la
+    définition qu'on cherche vaut la peine d'être essayé. C'est la seule façon
+    honnête de trouver l'URL de recherche d'un site qui n'expose pas de
+    formulaire — la deviner de l'extérieur ne marche pas.
+    """
+    found: dict[str, str] = {}
+    for url in urls:
+        split = urlparse.urlsplit(url)
+        segments = [s for s in split.path.strip("/").split("/") if s]
+        for i, segment in enumerate(segments):
+            if not (SLUG_SEG_RE.match(segment) or len(segment) > 24):
+                continue
+            shaped = segments[:]
+            shaped[i] = "{slug}"
+            template = "%s://%s/%s" % (split.scheme, split.netloc, "/".join(shaped))
+            found.setdefault(template, url)
+            break
+        if len(found) >= limit:
+            break
+    return [{"template": t, "from": u} for t, u in found.items()]
 
 
 # --------------------------------------------------------------------------- #
@@ -761,7 +844,48 @@ class Scanner:
         info["is_index"] = "<sitemapindex" in text
         info["count"] = len(locs)
         info["samples"] = locs[:8]
+        info["all"] = locs
         return info
+
+    def explore_sitemaps(self, site: Site, robots: dict, crawl_delay: float) -> list[dict]:
+        """
+        Descend d'un cran dans un index de sitemaps.
+
+        S'arrêter à l'index ne dit rien : « 18 URL » sur motscroises.fr, ce sont
+        dix-huit sous-sitemaps, pas dix-huit pages. Le compte réel de la base et
+        la forme de ses URL sont un niveau plus bas — et c'est justement ce qu'il
+        faut pour interroger un site qui n'expose aucun formulaire.
+        """
+        root = "%s://%s" % urlparse.urlsplit(site.home)[:2]
+        roots = list(robots["sitemaps"]) or [root + "/sitemap.xml"]
+        out: list[dict] = []
+        budget = self.args.max_sitemaps
+        for url in roots[: self.args.max_sitemaps]:
+            info = self.read_sitemap(url, crawl_delay)
+            out.append(info)
+            if info["count"]:
+                self.say("    %s : %s URL%s" % (
+                    url, info["count"], " (index de sitemaps)" if info["is_index"] else ""))
+            if not info["is_index"]:
+                continue
+            for child in info.get("all", [])[:budget]:
+                if not self.allowed(site, child):
+                    continue
+                sub = self.read_sitemap(child, crawl_delay)
+                sub["parent"] = url
+                out.append(sub)
+                budget -= 1
+                if sub["count"]:
+                    self.say("      ↳ %s : %s URL" % (child.rsplit("/", 1)[-1], sub["count"]))
+                if budget <= 0:
+                    break
+            if budget <= 0:
+                break
+        # La liste complète a servi à descendre ; la garder mettrait des milliers
+        # d'URL dans le rapport, que personne ne lira.
+        for info in out:
+            info.pop("all", None)
+        return out
 
     # -- le corps du scan --------------------------------------------------- #
 
@@ -834,19 +958,11 @@ class Scanner:
         if not robots["allows_home"]:
             self.say("    robots.txt interdit cette zone aux robots")
 
-        # 3. sitemap — la piste « base énumérable hors-ligne »
+        # 3. sitemap — la piste « base énumérable hors-ligne », et la forme des URL
         report["sitemaps"] = []
         if self.args.sitemap:
             self.say("  · sitemap…")
-            root = "%s://%s" % urlparse.urlsplit(site.home)[:2]
-            candidates = list(robots["sitemaps"]) or [root + "/sitemap.xml"]
-            for candidate in candidates[: self.args.max_sitemaps]:
-                info = self.read_sitemap(candidate, crawl_delay)
-                report["sitemaps"].append(info)
-                if info["count"]:
-                    self.say("    %s : %s URL%s" % (
-                        candidate, info["count"], " (index de sitemaps)" if info["is_index"] else "",
-                    ))
+            report["sitemaps"] = self.explore_sitemaps(site, robots, crawl_delay)
 
         # 4. CORS — la question décisive
         self.say("  · CORS…")
@@ -871,6 +987,9 @@ class Scanner:
         self.say("  · formulaires…")
         forms: list[Form] = discover_forms(home.text, home.final_url or site.home)
         pages_scanned = [site.home]
+        # Gardé pour la récolte de liens plus bas : une page « recherche » porte
+        # souvent des exemples de définitions que l'accueil n'a pas.
+        harvested: list[tuple[str, str]] = [(home.final_url or site.home, home.text)]
         for page in site.search_pages:
             if not self.allowed(site, page):
                 continue
@@ -878,10 +997,29 @@ class Scanner:
             if resp.ok:
                 pages_scanned.append(page)
                 forms.extend(discover_forms(resp.text, resp.final_url or page))
+                harvested.append((resp.final_url or page, resp.text))
         usable_forms = [f for f in forms if url_from_form(f, PROBES[0])]
         report["forms"] = [f.as_dict() for f in forms]
         report["pages_scanned"] = pages_scanned
         self.say("    %s formulaire(s), dont %s exploitable(s)" % (len(forms), len(usable_forms)))
+
+        # 5b. la forme des URL du site, lue dans ses liens et son sitemap, puis
+        # transformée en gabarits — le rattrapage des sites sans formulaire.
+        merged: dict[str, dict] = {}
+        for page_url, markup in harvested:
+            for row in link_shapes(markup, page_url):
+                current = merged.setdefault(row["shape"], {**row, "count": 0})
+                current["count"] += row["count"]
+        report["link_shapes"] = sorted(merged.values(), key=lambda row: -row["count"])[:14]
+        observed = [row["example"] for row in report["link_shapes"]]
+        for info in report.get("sitemaps", []):
+            if not info.get("is_index"):
+                observed.extend(info.get("samples", []))
+        report["derived"] = derive_templates(observed)
+        if report["derived"]:
+            self.say("    %s gabarit(s) déduit(s) des URL du site" % len(report["derived"]))
+            for row in report["derived"]:
+                self.say("      %s" % urlparse.urlsplit(row["template"]).path)
 
         # 6. endpoints JSON éventuels
         if self.args.deep:
@@ -892,7 +1030,8 @@ class Scanner:
 
         # 7. interrogations réelles
         self.say("  · interrogations…")
-        report["queries"] = self._run_queries(site, usable_forms, ua, crawl_delay)
+        report["queries"] = self._run_queries(
+            site, usable_forms, ua, crawl_delay, report["derived"])
         report["complete"] = True
         return report
 
@@ -934,13 +1073,23 @@ class Scanner:
                     found.append(path)
         return found[:40]
 
-    def _run_queries(self, site: Site, forms: list[Form], ua: str, crawl_delay: float) -> list[dict]:
+    def _run_queries(self, site: Site, forms: list[Form], ua: str, crawl_delay: float,
+                     derived: list[dict] | None = None) -> list[dict]:
         results: list[dict] = []
         # Un site qui a la réponse la donne tout de suite, ou une fois sur deux ;
         # un site qui en enchaîne trois sans rien n'en a pas. Insister coûte des
         # minutes à chaque site muet, et il y en a plus que de sites utiles.
         misses = 0
         hits = 0
+        # Sauf s'il autorise CORS. Celui-là est le seul qui puisse dispenser
+        # d'un serveur : l'abandonner faute d'avoir trouvé son URL de recherche,
+        # c'est renoncer au meilleur résultat possible pour une économie de
+        # quelques secondes. C'est exactement ce qui s'est produit au premier
+        # scan sur motscroises.fr.
+        cors_ok = bool((self.current or {}).get("cors", {}).get("simple_ok"))
+        if cors_ok:
+            self.say("    (CORS ouvert : ce site est exploré jusqu'au bout)")
+
         for probe in PROBES[: self.args.probes]:
             attempts: list[tuple[str, str, dict[str, str] | None]] = []
             for template in site.templates:
@@ -949,6 +1098,9 @@ class Scanner:
                 # exactement ce qu'il faudra recopier dans l'app.
                 label = "gabarit `%s`" % (urlparse.urlsplit(template).path or template)
                 attempts.append((label, expand(template, probe), None))
+            for row in derived or []:
+                label = "déduit `%s`" % urlparse.urlsplit(row["template"]).path
+                attempts.append((label, expand(row["template"], probe), None))
             for form in forms[: self.args.max_forms]:
                 built = url_from_form(form, probe)
                 if not built:
@@ -998,7 +1150,7 @@ class Scanner:
 
                 # Une seule réussite suffit à racheter le site : on ne l'abandonne
                 # plus, on va au bout pour en tirer tout ce qu'on peut.
-                if hits == 0 and self.args.give_up and misses >= self.args.give_up:
+                if hits == 0 and self.args.give_up and misses >= self.args.give_up and not cors_ok:
                     reason = "abandonné après %s essai%s sans résultat" % (
                         misses, "s" if misses > 1 else "")
                     self.say("    ⏭  %s — on passe au suivant" % reason)
@@ -1090,7 +1242,10 @@ def classify(report: dict) -> tuple[str, str]:
     cors_ok = bool(report.get("cors", {}).get("simple_ok"))
     hit_with_cors = [q for q in hits if cors_verdict(q.get("cors", {}))[0]]
 
-    sitemap_total = sum(s.get("count", 0) for s in report.get("sitemaps", []))
+    # Seulement les feuilles : « 18 URL » sur un index, ce sont dix-huit
+    # sous-sitemaps, pas dix-huit pages, et les compter tromperait le verdict.
+    sitemap_total = sum(s.get("count", 0) for s in report.get("sitemaps", [])
+                        if not s.get("is_index"))
 
     if hit_with_cors or (hits and cors_ok):
         return "direct", "répond aux définitions ET autorise CORS : appelable depuis GitHub Pages"
@@ -1238,13 +1393,20 @@ def markdown(reports: list[dict], meta: dict) -> str:
                 "" if robots.get("allows_home", True) else " — **interdit cette zone**",
                 ", Crawl-delay %.1fs" % robots["crawl_delay"] if robots.get("crawl_delay") else "",
             ))
-        for sitemap in report.get("sitemaps", []):
-            if sitemap.get("count"):
-                add("- Sitemap `%s` : %s URL%s" % (
-                    sitemap["url"], sitemap["count"],
-                    " (index)" if sitemap.get("is_index") else ""))
-                for sample in sitemap.get("samples", [])[:3]:
-                    add("  - `%s`" % sample)
+        sitemaps = [s for s in report.get("sitemaps", []) if s.get("count")]
+        leaves = sum(s["count"] for s in sitemaps if not s.get("is_index"))
+        for sitemap in sitemaps:
+            indent = "  " if sitemap.get("parent") else ""
+            add("%s- Sitemap `%s` : %s URL%s" % (
+                indent, sitemap["url"], sitemap["count"],
+                " (index de sitemaps)" if sitemap.get("is_index") else ""))
+            for sample in sitemap.get("samples", [])[:3]:
+                add("%s  - `%s`" % (indent, sample))
+        if leaves:
+            add("- **%s page(s)** atteintes par les sitemaps explorés%s." % (
+                leaves,
+                " — la base peut donc se moissonner une fois pour toutes"
+                if leaves > 1000 else ""))
 
         cors = report.get("cors", {})
         if cors:
@@ -1263,6 +1425,18 @@ def markdown(reports: list[dict], meta: dict) -> str:
                     for f in form.get("fields", [])[:8]
                 )
                 add("  - `%s %s` → %s" % (form["method"].upper(), form["action"], names or "—"))
+
+        shapes = report.get("link_shapes") or []
+        if shapes:
+            add("- Formes d'URL internes, par fréquence :")
+            for row in shapes[:10]:
+                add("  - `%s` ×%s — ex. `%s`" % (row["shape"], row["count"], row["example"]))
+
+        derived = report.get("derived") or []
+        if derived:
+            add("- Gabarits déduits de ces URL et essayés :")
+            for row in derived:
+                add("  - `%s` (d'après `%s`)" % (row["template"], row["from"]))
 
         endpoints = report.get("endpoints") or []
         if endpoints:
