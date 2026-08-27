@@ -15,6 +15,8 @@ import {
   pickRevealPosition,
   remainingJokers,
 } from '../src/lib/jokers.ts'
+import { parseMotscroises } from '../src/lib/solvers/motscroises.ts'
+import { lettersOf } from '../src/lib/hints.ts'
 
 let failures = 0
 
@@ -123,6 +125,65 @@ check('la seconde lettre vient de la même solution', first === second, `${first
 check('et d\'une autre case', at1 !== at2, `${at1} puis ${at2}`)
 check('les deux lettres forment bien un début de mot',
   `${first[at1]}${second[at2]}` === 'SO', `${first[at1]}${second[at2]}`)
+
+console.log('\nLecture de la grille')
+/*
+ * `lettersOf` est la couture entre l'état de jeu et la mécanique : elle traduit
+ * un mot et une progression en deux tableaux indexés par position. Une erreur
+ * d'un cran ici décalerait toutes les lettres révélées.
+ */
+const word = {
+  id: 'w1',
+  clueId: 'c1',
+  clueText: 'ASTRE DU JOUR',
+  arrow: 'right',
+  direction: 'across',
+  origin: { r: 0, c: 0 },
+  cells: [
+    { r: 0, c: 1 }, { r: 0, c: 2 }, { r: 0, c: 3 },
+    { r: 0, c: 4 }, { r: 0, c: 5 }, { r: 0, c: 6 },
+  ],
+}
+const progress = {
+  puzzleId: 'p',
+  letters: { '0,1': 'S', '0,3': 'Z' },
+  drafts: {},
+  updatedAt: 0,
+}
+const seen = lettersOf(word, progress, new Set(['0,1']))
+// JSON.stringify rend `undefined` en `null` dans un tableau : la comparaison
+// porte donc sur cette forme-là, pas sur le littéral d'origine.
+check('les lettres suivent l\'ordre de lecture du mot',
+  JSON.stringify(seen.typed) === '["S",null,"Z",null,null,null]',
+  JSON.stringify(seen.typed))
+check('seule la case révélée est certaine',
+  seen.certain[0] === 'S' && seen.certain[2] === undefined,
+  JSON.stringify(seen.certain))
+check('une case vide reste vide des deux côtés',
+  seen.typed[1] === undefined && seen.certain[1] === undefined)
+
+console.log('\nDe la page réelle à la lettre montrée')
+/*
+ * La chaîne complète, sans réseau : le HTML capturé sur motscroises.fr, lu par
+ * le parseur, puis conduit jusqu'à la case que l'indice révélera. C'est la
+ * couture que les tests unitaires des deux bouts ne couvrent pas.
+ */
+const REAL = `<div class="best-treffer-box"><h2 class="title"> Les meilleures solutions pour Astre du jour</h2><!--[--><div><a href="/sujet/ASTRE-DU-JOUR/6/******" class="bold d-block d-md-inline"><strong class="bigger-letter">6</strong> Lettres : </a><ul class="top-results-group"><!--[--><li class="best"><a title="Définition: Astre du jour">SOLEIL</a></li><!--]--></ul></div><!--]--></div>
+<div id="result-table" class="search-result-left"><div class="result-title"><h2>Astre du jour en 6 lettres <br> 1 réponse</h2></div><table class="table"><tbody><tr class="light-gray best"><td class="solution"><div class="puzzle-solution"><a href="/solution/SOLEIL" class="">SOLEIL</a></div></td></tr></tbody></table>
+<div id="synonyms"><h2>Synonymes pour ASTRE DU JOUR</h2><div class="synonym-link"><a href="/sujet/PHEBUS" class="">PHÉBUS</a></div></div></div>`
+
+const parsed = parseMotscroises(REAL)
+const chain = pickAnswer(parsed, 6, seen.certain, seen.typed)
+check('la page réelle donne bien SOLEIL', chain === 'SOLEIL', String(chain))
+check('le synonyme PHÉBUS n\'a pas contaminé le choix',
+  !parsed.some((c) => c.answer === 'PHEBUS'), parsed.map((c) => c.answer).join(','))
+
+// La case 0 porte déjà « S », juste ; la case 2 porte « Z », faux ; le reste est
+// vide. L'indice doit préférer une case vide — donc ni 0 ni 2.
+const at = pickRevealPosition(chain, seen.typed)
+check('l\'indice évite la case déjà juste et la case fausse',
+  at === 1, `case ${at}`)
+check('et il montre la bonne lettre', chain[at] === 'O', chain[at])
 
 console.log(`\n${failures} échec(s)\n`)
 process.exit(failures ? 1 : 0)

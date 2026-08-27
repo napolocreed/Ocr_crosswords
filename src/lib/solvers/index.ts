@@ -1,4 +1,4 @@
-import { getCachedClue, saveCachedClue } from '../db'
+import { getCachedClue, getSetting, saveCachedClue } from '../db'
 import { fsolver } from './fsolver'
 import { motscroises } from './motscroises'
 import { type Candidate, type Solver, clueKey } from './types'
@@ -71,23 +71,33 @@ async function fetchPage(url: string): Promise<string | null> {
   }
 }
 
+/** La permission enregistrée d'interroger un site tiers. Refusée par défaut. */
+export const CONSENT_SETTING = 'hints.online'
+
+export async function hasConsent(): Promise<boolean> {
+  return getSetting(CONSENT_SETTING, false)
+}
+
 /**
  * Les solutions connues pour une définition.
  *
- * @param online autorise l'appel réseau. Faux ⇒ on se contente de la réserve
- *   locale, ce qui est le comportement tant que le joueur n'a pas accepté que
- *   ses définitions sortent de l'appareil.
+ * @param online intention de l'appelant. Elle ne suffit pas : le consentement
+ *   enregistré est relu ici, à l'endroit même d'où part la requête. Le vérifier
+ *   seulement dans l'interface laisserait une erreur d'un autre appelant faire
+ *   sortir une définition de l'appareil — c'est précisément ce qu'on promet qui
+ *   n'arrivera pas.
  */
 export async function lookupClue(clue: string, online: boolean): Promise<Lookup> {
   const key = clueKey(clue)
   if (!key) return { candidates: [], origin: 'unavailable' }
 
+  const allowed = online && (await hasConsent())
   const now = Date.now()
   const cached = await getCachedClue(key)
-  if (cached && (fresh(cached, now) || !online)) {
+  if (cached && (fresh(cached, now) || !allowed)) {
     return { candidates: cached.candidates, origin: 'cache', source: cached.source }
   }
-  if (!online) return { candidates: [], origin: 'unavailable' }
+  if (!allowed) return { candidates: [], origin: 'unavailable' }
 
   for (const solver of DIRECT_SOLVERS) {
     const html = await fetchPage(solver.url(clue))

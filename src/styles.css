@@ -31,6 +31,11 @@
   --cell-block: #39414f;
   --cell-active: #ffd66b;
   --cell-word: #a8d1ff;
+  /* Lettre donnée par un joker. Neutre exprès : une teinte bleue se serait
+     fondue dans le fond du mot actif, et le vert ou le rouge auraient laissé
+     croire à un jugement « juste / faux ». Contraste ≥ 6:1 sur les trois fonds
+     de case — blanc, bleu du mot courant, jaune de la case active. */
+  --cell-given: #3d4657;
   --cell-rule: #6b7689;
   /* Arrows are struck into the letter squares, under the letters, so they read
      clearly against every square colour without competing with the writing. */
@@ -498,7 +503,7 @@ textarea:focus {
  * la partie qu'on a jouée.
  */
 .cell.revealed {
-  color: var(--accent-dim);
+  color: var(--cell-given);
   font-style: italic;
 }
 

@@ -9,6 +9,7 @@ import { Sheet } from '../components/Sheet'
 import { mysteryPositions, readMysteryAnswer } from '../lib/puzzle'
 import { buildShareLink, offerShareLink } from '../lib/shareLink'
 import { getSetting } from '../lib/db'
+import { CONSENT_SETTING } from '../lib/solvers'
 
 /** Ce qu'on dit au joueur, sans jamais laisser croire qu'un joker a été perdu. */
 function outcomeMessage(outcome: RevealOutcome): string {
@@ -55,7 +56,7 @@ export function PlayScreen({ puzzle, progress, onBack, onReview, onToast }: Prop
   const [seeking, setSeeking] = useState(false)
 
   useEffect(() => {
-    void getSetting('hints.online', false).then(setOnline)
+    void getSetting(CONSENT_SETTING, false).then(setOnline)
   }, [])
 
   const spend = async (whole: boolean) => {

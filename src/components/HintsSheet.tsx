@@ -3,6 +3,7 @@ import { Sheet } from './Sheet'
 import type { Word } from '../lib/puzzle'
 import { type PrefetchProgress, prefetchAnswers } from '../lib/hints'
 import { clearCachedClues, countCachedClues, setSetting } from '../lib/db'
+import { CONSENT_SETTING } from '../lib/solvers'
 import type { Allowance } from '../lib/jokers'
 
 interface Props {
@@ -97,8 +98,9 @@ export function HintsSheet({
             checked={online}
             style={{ width: 22, height: 22, flex: 'none', marginTop: 2 }}
             onChange={(event) => {
-              onOnlineChange(event.target.checked)
-              void setSetting('hints.online', event.target.checked)
+              const allowed = event.target.checked
+              onOnlineChange(allowed)
+              void setSetting(CONSENT_SETTING, allowed)
             }}
           />
           <span>
