@@ -484,6 +484,15 @@ n'ont rien rendu d'exploitable.
 le sondage a réellement capturé, pièges de la page compris — le bloc JSON-LD de FSolver répète
 les solutions dans des liens qui n'en sont pas.
 
+Ce tableau laisse une question ouverte, et c'est celle qui décide de tout : le sondage a mesuré
+CORS sur les **pages d'accueil**, alors que la PWA appellera des **pages de résultats**. Un site
+peut autoriser l'une sans l'autre. `scripts/probe-motscroises.py` tranche ce point et rien
+d'autre : il s'acharne sur motscroises.fr pour trouver son URL de recherche — par ses liens, ses
+sitemaps et une liste de formes usuelles — puis relève CORS sur la page qui a répondu, et repose
+la même question aux quatre autres sites qui savent répondre. Autonome, sans argument, sans
+dépendance, rapport de deux pages affiché dans le terminal : il est fait pour un téléphone qui
+n'a qu'un bouton ▶.
+
 Le volume reste petit — quelques dizaines de requêtes par site, une demi-seconde entre chacune,
 `robots.txt` et son `Crawl-delay` respectés, agent identifiable. C'est une évaluation de
 faisabilité, pas une aspiration de contenu. Le Wiktionnaire, dont l'API autorise CORS, sert de
