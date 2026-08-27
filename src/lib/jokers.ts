@@ -72,10 +72,16 @@ export function pickAnswer(
 
   const matches = (answer: string) =>
     certain.every((letter, i) => !letter || answer[i] === letter)
-  const consistent = pool.filter((candidate) => matches(candidate.answer))
-  // Si plus rien ne colle, la réserve a changé depuis la première révélation.
-  // Mieux vaut une aide un peu moins sûre que plus d'aide du tout.
-  const usable = consistent.length > 0 ? consistent : pool
+  const usable = pool.filter((candidate) => matches(candidate.answer))
+  /*
+   * Vide veut dire qu'aucune solution ne s'accorde avec une lettre déjà
+   * révélée — la réserve a changé sous nos pieds entre deux jokers. On rend
+   * `null` plutôt qu'une solution de repli : contredire une lettre qu'on a
+   * soi-même donnée est la pire issue possible, le joueur y croit sans réserve
+   * et il a payé pour elle. Sans lettre certaine, ce cas ne peut pas se
+   * produire — tout le monde passe le filtre.
+   */
+  if (usable.length === 0) return null
 
   const agreement = (answer: string) =>
     typed.reduce<number>((total, letter, i) => total + (letter && answer[i] === letter ? 1 : 0), 0)

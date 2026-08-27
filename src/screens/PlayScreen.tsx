@@ -167,7 +167,10 @@ export function PlayScreen({ puzzle, progress, onBack, onReview, onToast }: Prop
             aria-label={`Indice — une lettre (${play.remaining.hints} restants)`}
             onClick={() => void spend(false)}
           >
-            <span aria-hidden="true">💡</span>
+            {/* La recherche peut prendre plusieurs secondes sur un réseau lent.
+                Sans ce point d'attente, le bouton se grise sans rien dire et on
+                croit l'appui perdu. */}
+            <span aria-hidden="true">{seeking ? '⋯' : '💡'}</span>
             <em>{play.remaining.hints}</em>
           </button>
           <button
@@ -177,7 +180,7 @@ export function PlayScreen({ puzzle, progress, onBack, onReview, onToast }: Prop
             aria-label={`Solution — le mot entier (${play.remaining.solutions} restantes)`}
             onClick={() => void spend(true)}
           >
-            <span aria-hidden="true">🔑</span>
+            <span aria-hidden="true">{seeking ? '⋯' : '🔑'}</span>
             <em>{play.remaining.solutions}</em>
           </button>
         </div>

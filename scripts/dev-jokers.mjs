@@ -78,9 +78,16 @@ check('une lettre tapée FAUSSE ne fait pas perdre la bonne réponse',
 check('la préférence la plus forte l\'emporte',
   pickAnswer(pool, 6, [], ['E', 'T', 'O']) === 'ETOILE',
   String(pickAnswer(pool, 6, [], ['E', 'T', 'O'])))
-check('si plus rien ne colle, on aide quand même',
-  pickAnswer(words(['SOLEIL']), 6, ['Z']) === 'SOLEIL',
+// Le cas où la réserve a changé entre deux jokers : plus rien ne s'accorde avec
+// une lettre déjà donnée. Rendre une solution de repli contredirait cette
+// lettre-là — celle en qui le joueur a le plus confiance, et pour laquelle il a
+// payé. On préfère ne rien rendre, et ne rien décompter.
+check('rien plutôt qu\'une solution qui contredit une lettre déjà révélée',
+  pickAnswer(words(['SOLEIL']), 6, ['Z']) === null,
   String(pickAnswer(words(['SOLEIL']), 6, ['Z'])))
+check('sans lettre révélée, ce refus ne peut pas se déclencher',
+  pickAnswer(words(['SOLEIL']), 6, [], ['Z', 'Z']) === 'SOLEIL',
+  String(pickAnswer(words(['SOLEIL']), 6, [], ['Z', 'Z'])))
 
 console.log('\nChoix de la lettre à montrer')
 const empty = [undefined, undefined, undefined, undefined, undefined, undefined]

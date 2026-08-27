@@ -1,7 +1,7 @@
 import { type Progress, cellKey } from '../types'
 import { pickAnswer } from './jokers'
 import type { Word } from './puzzle'
-import { type LookupOrigin, isClueCached, lookupClue } from './solvers'
+import { type LookupOrigin, lookupClue } from './solvers'
 
 /**
  * Trouver la réponse d'une définition, pour que les jokers aient de quoi
@@ -98,19 +98,23 @@ export async function prefetchAnswers(
 
   for (const word of unique) {
     if (signal?.aborted) break
-    // Déjà en réserve : rien à demander, et la progression avance tout de suite.
-    if (await isClueCached(word.clueText)) {
-      state.done++
-      state.found++
-      onProgress({ ...state })
-      continue
-    }
+    /*
+     * `lookupClue` sert aussi pour ce qui est déjà en réserve : il rend le cache
+     * sans rien demander, et surtout il dit s'il y a vraiment une solution.
+     * Se fier à « la définition est en cache » comptait comme prête une
+     * définition dont on avait justement appris que le site ne l'a pas, et
+     * annonçait au joueur une réserve qu'il n'avait pas.
+     */
     const { candidates, origin } = await lookupClue(word.clueText, online)
     state.done++
-    if (origin !== 'unavailable' && candidates.length > 0) state.found++
+    if (candidates.length > 0) state.found++
     onProgress({ ...state })
     if (signal?.aborted) break
-    await new Promise((resolve) => setTimeout(resolve, PREFETCH_GAP_MS))
+    // Aucune pause quand rien n'est parti sur le réseau : la politesse concerne
+    // le site, pas la base locale.
+    if (origin === 'network') {
+      await new Promise((resolve) => setTimeout(resolve, PREFETCH_GAP_MS))
+    }
   }
   return { ...state }
 }

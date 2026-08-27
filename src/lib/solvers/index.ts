@@ -112,11 +112,3 @@ export async function lookupClue(clue: string, online: boolean): Promise<Lookup>
   if (cached) return { candidates: cached.candidates, origin: 'cache', source: cached.source }
   return { candidates: [], origin: 'unavailable' }
 }
-
-/** Vrai si la définition a déjà une réponse en réserve, utilisable hors-ligne. */
-export async function isClueCached(clue: string): Promise<boolean> {
-  const key = clueKey(clue)
-  if (!key) return false
-  const cached = await getCachedClue(key)
-  return cached !== undefined && fresh(cached, Date.now())
-}
