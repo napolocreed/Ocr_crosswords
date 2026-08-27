@@ -12,7 +12,8 @@
     "icons": "node scripts/make-icons.mjs",
     "smoke": "node scripts/smoke.mjs",
     "dev:detect": "node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/dev-detect.mjs",
-    "dev:ocr": "node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/dev-ocr.mjs"
+    "dev:ocr": "node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/dev-ocr.mjs",
+    "dev:solvers": "node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/dev-solvers.mjs"
   },
   "dependencies": {
     "idb": "^8.0.3",

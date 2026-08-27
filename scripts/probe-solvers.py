@@ -1247,8 +1247,17 @@ def classify(report: dict) -> tuple[str, str]:
     sitemap_total = sum(s.get("count", 0) for s in report.get("sitemaps", [])
                         if not s.get("is_index"))
 
-    if hit_with_cors or (hits and cors_ok):
-        return "direct", "répond aux définitions ET autorise CORS : appelable depuis GitHub Pages"
+    # La distinction porte tout le verdict : un en-tête CORS sur l'accueil ne dit
+    # rien de la page de résultats, et c'est celle-là que la PWA appellera. Les
+    # confondre ferait annoncer « aucun serveur nécessaire » sur une mesure qui
+    # ne le prouve pas.
+    if hit_with_cors:
+        return "direct", ("répond aux définitions ET autorise CORS sur la page de résultats "
+                          "elle-même : appelable depuis GitHub Pages")
+    if hits and cors_ok:
+        return "direct-accueil", ("répond aux définitions, et autorise CORS sur l'accueil — "
+                                  "mais pas d'en-tête CORS relevé sur la page de résultats, "
+                                  "à confirmer avant d'écarter le relais")
     if hits:
         note = "répond aux définitions, mais sans CORS : il faut un relais"
         if sitemap_total > 1000:
@@ -1267,8 +1276,13 @@ def classify(report: dict) -> tuple[str, str]:
     return "sans-réponse", "répond, mais aucune des réponses attendues n'apparaît dans le HTML"
 
 
+# Assez pour reconnaître la structure d'une page, pas de quoi rendre le rapport
+# intransmissible depuis un téléphone.
+MAX_SNIPPET_BLOCKS = 3
+
 BADGE = {
     "direct": "✅ direct",
+    "direct-accueil": "🟡 direct à confirmer",
     "relais": "🟠 relais requis",
     "js": "🔵 rendu JS",
     "sans-réponse": "⚪ sans résultat",
@@ -1309,6 +1323,7 @@ def markdown(reports: list[dict], meta: dict) -> str:
     add("")
 
     direct = [r for r in reports if verdicts[r["id"]][0] == "direct" and r["id"] != "wiktionnaire"]
+    maybe_direct = [r for r in reports if verdicts[r["id"]][0] == "direct-accueil"]
     relais = [r for r in reports if verdicts[r["id"]][0] == "relais"]
     enumerable = [
         r for r in reports
@@ -1337,6 +1352,11 @@ def markdown(reports: list[dict], meta: dict) -> str:
             add("- **Un site est appelable directement** (%s). La PWA peut rester sur GitHub "
                 "Pages, sans serveur : voir les extraits HTML plus bas pour écrire le parseur."
                 % ", ".join(r["name"] for r in direct))
+        elif maybe_direct:
+            add("- **%s autorise CORS sur son accueil et répond aux définitions**, mais aucun "
+                "en-tête CORS n'a été relevé sur la page de résultats elle-même. C'est celle-là "
+                "que la PWA appellera : à confirmer avant de conclure qu'aucun serveur n'est "
+                "nécessaire." % ", ".join(r["name"] for r in maybe_direct))
         elif enumerable:
             add("- **Aucun site appelable directement**, mais %s expose(nt) un sitemap assez gros "
                 "pour constituer un jeu de données hors-ligne une bonne fois. GitHub Pages reste "
@@ -1458,15 +1478,32 @@ def markdown(reports: list[dict], meta: dict) -> str:
                     query["clue"], query["length"], query.get("via", ""),
                     query.get("status"), query.get("summary", "")))
 
+            # Les extraits se ressemblent d'une définition à l'autre : c'est la
+            # même page, le même gabarit. Un site en répétait douze quasi
+            # identiques, et c'est ce qui rendait le rapport trop gros pour être
+            # transmis. Un seul exemplaire de chaque forme suffit à écrire le
+            # parseur ; le JSON garde tout.
+            seen: set[str] = set()
+            shown = 0
             for query in queries:
-                if not query.get("snippets"):
+                fresh = []
+                for snippet in query.get("snippets") or []:
+                    # Signature sur la structure, chiffres et mots ôtés : deux
+                    # extraits qui ne diffèrent que par la réponse sont un seul.
+                    signature = re.sub(r"[A-Za-zÀ-ÿ0-9]+", "", snippet)[:220]
+                    if signature in seen:
+                        continue
+                    seen.add(signature)
+                    fresh.append(snippet)
+                if not fresh or shown >= MAX_SNIPPET_BLOCKS:
                     continue
+                shown += 1
                 add("")
-                add("**Extraits HTML — %s → %s** (`%s`)" % (
+                add("**Extrait HTML — %s → %s** (`%s`)" % (
                     query["clue"], "/".join(query["matched"]), query["url"]))
                 add("")
                 add("```html")
-                for snippet in query["snippets"]:
+                for snippet in fresh[:2]:
                     add(snippet[:600])
                     add("")
                 add("```")

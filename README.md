@@ -463,6 +463,27 @@ sur deux, et insister sur les autres coûtait plus que tout le reste du scan. L'
 dans le rapport, jamais silencieux — et **un site qui autorise CORS n'est jamais abandonné**,
 puisque c'est le seul type capable de rendre le serveur inutile.
 
+### Ce que le sondage a donné
+
+Premier scan complet, 16 sites, 205 requêtes. Le témoin fonctionne — le Wiktionnaire ressort bien
+en `Access-Control-Allow-Origin: *` — donc les verdicts CORS tiennent.
+
+| Site | Verdict | Ce qu'on en sait |
+| --- | --- | --- |
+| **FSolver** | relais requis | Répond aux 4 définitions, sur trois formes d'URL. Résultats balisés en microdonnées schema.org. Aucun en-tête CORS. |
+| **MotsCroises.fr** | direct | Le seul dont l'en-tête CORS couvre l'origine GitHub Pages. Trouvé grâce aux gabarits déduits de ses propres liens — au premier scan il était passé à travers. |
+| **Mots-Croises.ch** | relais requis | Répond aux 4 via son formulaire, mais aucun marqueur de longueur dans ses pages. Sitemap de 1008 URL. |
+| **Solutions-Mots-Fleches**, **Mots-Croises-Solutions** | relais requis | Répondent, pages denses en « N lettres ». Pas de CORS. |
+| **CommeUneFleche**, **Le Robert** | rendu JS | HTML servi vide : un fetch n'y verra rien. |
+| **dCode** | exclu | Refuse l'accès programmatique par écrit. |
+
+Les autres (Dico-Mots, MSolver, MotsAvec, Index Savant, Sport Cérébral, Le Mot Malin, 1mot.net)
+n'ont rien rendu d'exploitable.
+
+`src/lib/solvers/` lit ces pages ; `npm run dev:solvers` vérifie les parseurs contre le HTML que
+le sondage a réellement capturé, pièges de la page compris — le bloc JSON-LD de FSolver répète
+les solutions dans des liens qui n'en sont pas.
+
 Le volume reste petit — quelques dizaines de requêtes par site, une demi-seconde entre chacune,
 `robots.txt` et son `Crawl-delay` respectés, agent identifiable. C'est une évaluation de
 faisabilité, pas une aspiration de contenu. Le Wiktionnaire, dont l'API autorise CORS, sert de
