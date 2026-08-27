@@ -490,15 +490,33 @@ première se révèle insuffisante — le parseur FSolver est déjà écrit dans
 le sondage a réellement capturé, pièges de la page compris — le bloc JSON-LD de FSolver répète
 les solutions dans des liens qui n'en sont pas.
 
-`scripts/probe-motscroises.py` est la sonde de suivi, dédiée au site retenu. Elle a d'abord servi
-à trancher le point ci-dessus — le sondage général mesurait CORS sur les pages d'accueil, alors
-que la PWA appelle des pages de résultats, et un site peut autoriser l'une sans l'autre. Elle
-sert maintenant à ce qui reste à savoir pour lire ses pages : leur structure, la forme d'URL
-qu'elles attendent pour une définition à apostrophe, et si le filtre par motif
-(`/sujet/ASTRE-DU-JOUR/6/S*L**L`) fonctionne — auquel cas l'app pourra passer les lettres déjà
-croisées et proposer une réponse au lieu d'une liste. Autonome, sans argument, sans dépendance,
-rapport de trois pages affiché dans le terminal : elle est faite pour un téléphone qui n'a qu'un
-bouton ▶.
+`scripts/probe-motscroises.py` est la sonde de suivi, dédiée au site retenu. Elle a servi à
+trancher le point ci-dessus — le sondage général mesurait CORS sur les pages d'accueil, alors que
+la PWA appelle des pages de résultats, et un site peut autoriser l'une sans l'autre — puis à
+relever ce qu'il fallait pour lire ces pages. Autonome, sans argument, sans dépendance, rapport
+affiché dans le terminal : elle est faite pour un téléphone qui n'a qu'un bouton ▶.
+
+Trois choses en sont ressorties.
+
+**La forme d'URL n'est pas un obstacle.** Six graphies de `FLEUVE D'ÉGYPTE` répondent
+indifféremment — apostrophe en tiret, supprimée, conservée, accent conservé, majuscules ou
+minuscules. Le site publie ses propres liens en capitales avec l'apostrophe en tiret
+(`/sujet/DE-L-ASTRE-DU-JOUR`), c'est donc cette forme que l'app demande.
+
+**Ce qui diffère d'un site à l'autre, c'est la couverture.** Le témoin le montre :
+`oiseau-de-malheur` répond 200 sans contenir CORBEAU, là où FSolver l'a. Une définition absente
+n'est donc pas un bug à corriger mais un trou à assumer — ou à combler par une seconde source.
+
+**Le filtre par motif n'est pas démontré**, et le test qui devait le prouver était mal conçu :
+il cherchait la réponse n'importe où dans la page, alors que l'encart de tête liste les
+meilleures solutions quel que soit le filtre. `Z*****` et une longueur de 9 renvoient SOLEIL
+comme les autres, ce qui ne prouve ni que le filtre marche ni qu'il ne marche pas. L'app filtre
+donc par longueur elle-même, ce qu'elle sait faire de toute façon.
+
+La page, elle, porte ses solutions à deux endroits : un encart de tête groupé par longueur — le
+seul qui les couvre toutes — et un tableau qui n'en montre qu'une mais donne la forme canonique
+de chaque mot dans son lien. Le reste de la page est plein de mots qui n'en sont pas : synonymes
+et « sujets similaires » pointent vers `/sujet/…`, les solutions vers `/solution/…`.
 
 Le volume reste petit — quelques dizaines de requêtes par site, une demi-seconde entre chacune,
 `robots.txt` et son `Crawl-delay` respectés, agent identifiable. C'est une évaluation de
