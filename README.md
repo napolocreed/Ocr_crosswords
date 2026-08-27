@@ -470,28 +470,35 @@ en `Access-Control-Allow-Origin: *` — donc les verdicts CORS tiennent.
 
 | Site | Verdict | Ce qu'on en sait |
 | --- | --- | --- |
-| **FSolver** | relais requis | Répond aux 4 définitions, sur trois formes d'URL. Résultats balisés en microdonnées schema.org. Aucun en-tête CORS. |
-| **MotsCroises.fr** | direct | Le seul dont l'en-tête CORS couvre l'origine GitHub Pages. Trouvé grâce aux gabarits déduits de ses propres liens — au premier scan il était passé à travers. |
-| **Mots-Croises.ch** | relais requis | Répond aux 4 via son formulaire, mais aucun marqueur de longueur dans ses pages. Sitemap de 1008 URL. |
-| **Solutions-Mots-Fleches**, **Mots-Croises-Solutions** | relais requis | Répondent, pages denses en « N lettres ». Pas de CORS. |
+| **MotsCroises.fr** | **direct** | `/sujet/{definition-en-tirets}`. Le seul dont `Access-Control-Allow-Origin` couvre l'origine GitHub Pages — **sur la page de résultats elle-même**, préflight OPTIONS compris. Trouvé grâce aux gabarits déduits de ses propres liens ; au premier scan il était passé à travers. |
+| **FSolver** | relais requis | `/mots-fleches/{definition-en-tirets}`. Répond aux 4 définitions, résultats balisés en microdonnées schema.org. Aucun en-tête CORS, ni sur l'accueil ni sur les résultats. |
+| **Solutions-Mots-Fleches** | relais requis | `?definition={definition}`. Répond, microdonnées schema.org également. Pas de CORS. |
+| **Mots-Croises-Solutions** | relais requis | `/croises/-/{definition-en-tirets}`. Répond aux 3 définitions d'essai. Pas de CORS. |
+| **Mots-Croises.ch** | non mesuré | Répondait via son formulaire au sondage général ; l'URL n'a pas été retrouvée à la passe ciblée. Pas de CORS sur l'accueil. |
 | **CommeUneFleche**, **Le Robert** | rendu JS | HTML servi vide : un fetch n'y verra rien. |
 | **dCode** | exclu | Refuse l'accès programmatique par écrit. |
 
 Les autres (Dico-Mots, MSolver, MotsAvec, Index Savant, Sport Cérébral, Le Mot Malin, 1mot.net)
 n'ont rien rendu d'exploitable.
 
+**La question d'architecture est donc tranchée : l'app reste sur GitHub Pages, sans serveur.**
+MotsCroises.fr est appelable directement depuis la PWA. Les trois autres sources ne sont
+utilisables que derrière un relais, et ne seront donc envisagées que si la couverture de la
+première se révèle insuffisante — le parseur FSolver est déjà écrit dans ce cas.
+
 `src/lib/solvers/` lit ces pages ; `npm run dev:solvers` vérifie les parseurs contre le HTML que
 le sondage a réellement capturé, pièges de la page compris — le bloc JSON-LD de FSolver répète
 les solutions dans des liens qui n'en sont pas.
 
-Ce tableau laisse une question ouverte, et c'est celle qui décide de tout : le sondage a mesuré
-CORS sur les **pages d'accueil**, alors que la PWA appellera des **pages de résultats**. Un site
-peut autoriser l'une sans l'autre. `scripts/probe-motscroises.py` tranche ce point et rien
-d'autre : il s'acharne sur motscroises.fr pour trouver son URL de recherche — par ses liens, ses
-sitemaps et une liste de formes usuelles — puis relève CORS sur la page qui a répondu, et repose
-la même question aux quatre autres sites qui savent répondre. Autonome, sans argument, sans
-dépendance, rapport de deux pages affiché dans le terminal : il est fait pour un téléphone qui
-n'a qu'un bouton ▶.
+`scripts/probe-motscroises.py` est la sonde de suivi, dédiée au site retenu. Elle a d'abord servi
+à trancher le point ci-dessus — le sondage général mesurait CORS sur les pages d'accueil, alors
+que la PWA appelle des pages de résultats, et un site peut autoriser l'une sans l'autre. Elle
+sert maintenant à ce qui reste à savoir pour lire ses pages : leur structure, la forme d'URL
+qu'elles attendent pour une définition à apostrophe, et si le filtre par motif
+(`/sujet/ASTRE-DU-JOUR/6/S*L**L`) fonctionne — auquel cas l'app pourra passer les lettres déjà
+croisées et proposer une réponse au lieu d'une liste. Autonome, sans argument, sans dépendance,
+rapport de trois pages affiché dans le terminal : elle est faite pour un téléphone qui n'a qu'un
+bouton ▶.
 
 Le volume reste petit — quelques dizaines de requêtes par site, une demi-seconde entre chacune,
 `robots.txt` et son `Crawl-delay` respectés, agent identifiable. C'est une évaluation de
