@@ -36,22 +36,34 @@ Ce qu'il fait, par site
 
 Il écrit un rapport Markdown lisible, un JSON complet, et les pages brutes.
 
+Écrit pour être interrompu
+--------------------------
+Le rapport est réécrit à chaque étape, par fichier temporaire puis renommage :
+une veille d'écran ne coûte rien de ce qui a déjà été mesuré, et le fichier
+porte un bandeau « partiel » au lieu de se faire passer pour complet. La
+relance reprend d'elle-même où le scan s'était arrêté. Et un site qui répond
+sans jamais avoir la solution est abandonné au bout de trois essais — ceux qui
+ont la réponse la donnent tout de suite, ou une fois sur deux.
+
 Usage
 -----
 Sur Pydroid 3 : ouvrir le fichier, appuyer sur ▶. Aucun argument n'est requis,
-aucune dépendance à installer (bibliothèque standard uniquement).
+aucune dépendance à installer (bibliothèque standard uniquement). Si l'écran
+s'éteint en cours de route, il suffit de rappuyer sur ▶.
 
 En ligne de commande :
-    python3 probe-solvers.py                    # scan complet
+    python3 probe-solvers.py                    # scan complet, ~3 min
     python3 probe-solvers.py --only fsolver     # un seul site
     python3 probe-solvers.py --list             # lister les sites
+    python3 probe-solvers.py --fresh            # ignorer un rapport précédent
+    python3 probe-solvers.py --give-up 0        # ne jamais abandonner un site
     python3 probe-solvers.py --delay 3          # plus poli encore
 
 Politesse
 ---------
-Volume délibérément minuscule (quelques dizaines de requêtes en tout), pause
-entre chaque, robots.txt respecté par défaut, agent honnête et identifiable.
-C'est une évaluation de faisabilité, pas une aspiration de contenu.
+Volume délibérément petit, pause entre chaque requête, robots.txt et son
+Crawl-delay respectés par défaut, agent honnête et identifiable. C'est une
+évaluation de faisabilité, pas une aspiration de contenu.
 """
 
 from __future__ import annotations
@@ -631,15 +643,40 @@ def url_from_form(form: Form, probe: Probe) -> tuple[str, dict[str, str]] | None
 # --------------------------------------------------------------------------- #
 
 class Scanner:
-    def __init__(self, args: argparse.Namespace) -> None:
+    def __init__(self, args: argparse.Namespace, sink=None) -> None:
         self.args = args
         self.requests = 0
         self.last_request_at = 0.0
         self.dump_dir = os.path.join(args.out, "dumps")
         self._robots: dict[str, RobotFileParser] = {}
+        # `sink` reçoit l'état complet à chaque étape. Sans ça, un téléphone qui
+        # se met en veille au bout de dix minutes emporte tout le scan — c'est
+        # arrivé deux fois avant que ça n'existe.
+        self.sink = sink
+        self.done: list[dict] = []
+        self.current: dict | None = None
 
     def say(self, message: str = "") -> None:
         print(message, flush=True)
+
+    def flush(self) -> None:
+        """Écrit le rapport tel qu'il est, site en cours compris."""
+        if not self.sink:
+            return
+        rows = list(self.done)
+        if self.current is not None:
+            rows.append(self.current)
+        try:
+            self.sink(rows)
+        except Exception as exc:  # ne jamais faire tomber le scan sur une écriture
+            self.say("    ⚠️ écriture du rapport impossible : %s" % exc)
+
+    def commit(self) -> None:
+        """Clôt le site en cours et l'enregistre."""
+        if self.current is not None:
+            self.done.append(self.current)
+            self.current = None
+        self.flush()
 
     def wait(self, extra: float = 0.0) -> None:
         delay = max(self.args.delay, extra)
@@ -744,9 +781,17 @@ class Scanner:
             "note": site.note,
             "skipped": bool(site.skip_reason),
             "skip_reason": site.skip_reason,
+            # Passe à True à la toute fin. Une reprise ne réutilise que les
+            # sites complets : un site coupé en plein vol doit être refait.
+            "complete": False,
         }
+        # Publié tout de suite : si l'appareil s'éteint pendant la première
+        # requête, le rapport dira au moins quel site était en cours.
+        self.current = report
+        self.flush()
         if site.skip_reason:
             self.say("  ignoré — %s" % site.skip_reason)
+            report["complete"] = True
             return report
 
         # 1. joignabilité, et refus éventuel des agents non-navigateur
@@ -767,6 +812,7 @@ class Scanner:
         report["home"] = self._summarise(home)
         if not home.ok:
             self.say("    injoignable : %s" % (home.error or home.status))
+            report["complete"] = True
             return report
         size = len(home.body)
         self.say("    %s en %s ms, %s%s%s" % (
@@ -819,6 +865,7 @@ class Scanner:
             "preflight": read_cors(preflight),
         }
         self.say("    %s" % why)
+        self.flush()  # le verdict décisif est acquis : il ne doit plus se perdre
 
         # 5. formulaires de recherche
         self.say("  · formulaires…")
@@ -846,6 +893,7 @@ class Scanner:
         # 7. interrogations réelles
         self.say("  · interrogations…")
         report["queries"] = self._run_queries(site, usable_forms, ua, crawl_delay)
+        report["complete"] = True
         return report
 
     # -- sous-étapes -------------------------------------------------------- #
@@ -888,6 +936,11 @@ class Scanner:
 
     def _run_queries(self, site: Site, forms: list[Form], ua: str, crawl_delay: float) -> list[dict]:
         results: list[dict] = []
+        # Un site qui a la réponse la donne tout de suite, ou une fois sur deux ;
+        # un site qui en enchaîne trois sans rien n'en a pas. Insister coûte des
+        # minutes à chaque site muet, et il y en a plus que de sites utiles.
+        misses = 0
+        hits = 0
         for probe in PROBES[: self.args.probes]:
             attempts: list[tuple[str, str, dict[str, str] | None]] = []
             for template in site.templates:
@@ -936,9 +989,24 @@ class Scanner:
                     entry["summary"],
                 ))
                 if entry["found"]:
+                    hits += 1
                     hit_for_this_probe = True
                     if self.args.dump:
                         self._dump(site, probe, resp)
+                else:
+                    misses += 1
+
+                # Une seule réussite suffit à racheter le site : on ne l'abandonne
+                # plus, on va au bout pour en tirer tout ce qu'on peut.
+                if hits == 0 and self.args.give_up and misses >= self.args.give_up:
+                    reason = "abandonné après %s essai%s sans résultat" % (
+                        misses, "s" if misses > 1 else "")
+                    self.say("    ⏭  %s — on passe au suivant" % reason)
+                    if self.current is not None:
+                        self.current["abandoned"] = reason
+                    return results
+            # Le site en cours est réécrit sur le disque après chaque définition.
+            self.flush()
         return results
 
     def _judge(self, probe: Probe, resp: Resp, via: str) -> dict:
@@ -1037,6 +1105,10 @@ def classify(report: dict) -> tuple[str, str]:
         return "js", "pages rendues côté navigateur : un simple fetch ne verra rien"
     if not queries:
         return "sans-requête", "aucune URL de recherche exploitable trouvée"
+    # Dit franchement que le site n'a pas été exploré jusqu'au bout : un verdict
+    # tiré de trois essais ne vaut pas un verdict tiré de tous.
+    if report.get("abandoned"):
+        return "sans-réponse", report["abandoned"] + " — exploration écourtée"
     return "sans-réponse", "répond, mais aucune des réponses attendues n'apparaît dans le HTML"
 
 
@@ -1062,6 +1134,13 @@ def markdown(reports: list[dict], meta: dict) -> str:
     add("- %s requêtes, %s s d'attente entre chacune" % (meta["requests"], meta["delay"]))
     add("- Python %s sur %s" % (meta["python"], meta["platform"]))
     add("")
+    if meta.get("partial"):
+        finished = sum(1 for r in reports if r.get("complete"))
+        add("> ⏳ **Rapport partiel** — %s site(s) sur %s menés à terme. Le scan a été "
+            "interrompu, ou tourne encore. Relance le script : il reprendra où il s'est "
+            "arrêté et complétera ce fichier."
+            % (finished, meta.get("expected", len(reports))))
+        add("")
 
     verdicts = {r["id"]: classify(r) for r in reports}
 
@@ -1146,6 +1225,11 @@ def markdown(reports: list[dict], meta: dict) -> str:
             add("- Refuse les agents non-navigateur ; sondé avec un agent Chrome.")
         if home.get("likely_client_side"):
             add("- Page d'accueil quasi vide côté serveur : contenu injecté par JavaScript.")
+        if report.get("abandoned"):
+            add("- ⏭ **%s** : toutes les définitions n'ont pas été essayées sur ce site."
+                % report["abandoned"])
+        if not report.get("complete"):
+            add("- ⏳ Sondage inachevé sur ce site — il sera refait à la prochaine relance.")
 
         robots = report.get("robots", {})
         if robots:
@@ -1244,6 +1328,34 @@ def default_out() -> str:
     return os.getcwd()
 
 
+def load_previous(json_path: str) -> list[dict]:
+    """
+    Le rapport d'un run précédent, s'il est réutilisable.
+
+    Un rapport produit par une autre version du script est ignoré sans bruit :
+    reprendre sur des mesures faites par un code différent donnerait un rapport
+    mi-figue mi-raisin, impossible à interpréter.
+    """
+    try:
+        with open(json_path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except Exception:
+        return []
+    if (data.get("meta") or {}).get("version") != VERSION:
+        return []
+    sites = data.get("sites")
+    return sites if isinstance(sites, list) else []
+
+
+def order_by(chosen: list[Site], rows: list[dict]) -> list[dict]:
+    """Remet les sites dans l'ordre de la liste, dédoublonnés, reprise comprise."""
+    rank = {site.id: i for i, site in enumerate(chosen)}
+    latest: dict[str, dict] = {}
+    for row in rows:
+        latest[row.get("id", "")] = row
+    return sorted(latest.values(), key=lambda row: rank.get(row.get("id", ""), 10_000))
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         description="Sonde les sites français de solutions de mots fléchés.",
@@ -1251,8 +1363,13 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--only", default="", help="ids séparés par des virgules")
     parser.add_argument("--skip", default="", help="ids à écarter")
     parser.add_argument("--list", action="store_true", help="lister les sites et sortir")
-    parser.add_argument("--delay", type=float, default=2.0, help="pause entre requêtes (s)")
+    parser.add_argument("--delay", type=float, default=0.5, help="pause entre requêtes (s)")
     parser.add_argument("--probes", type=int, default=len(PROBES), help="nombre de définitions")
+    parser.add_argument("--give-up", type=int, default=3, metavar="N",
+                        help="abandonner un site après N interrogations sans résultat "
+                             "(0 = ne jamais abandonner)")
+    parser.add_argument("--fresh", action="store_true",
+                        help="repartir de zéro au lieu de reprendre un rapport interrompu")
     parser.add_argument("--first-hit", dest="exhaustive", action="store_false",
                         help="s'arrêter à la première URL qui répond, au lieu de "
                              "toutes les essayer (scan plus court, rapport plus pauvre)")
@@ -1291,39 +1408,86 @@ def main(argv: list[str]) -> int:
         print("Aucun site sélectionné.")
         return 1
 
-    print("Sondage de %s site(s), %.1fs entre requêtes." % (len(chosen), args.delay))
-    print("Sortie : %s" % args.out)
-
-    scanner = Scanner(args)
+    md_path = os.path.join(args.out, "rapport-solveurs.md")
+    json_path = os.path.join(args.out, "rapport-solveurs.json")
     started = time.time()
-    reports: list[dict] = []
-    for site in chosen:
+
+    # Reprise. Sur un téléphone qui s'endort au bout de dix minutes, refaire le
+    # scan depuis le début à chaque fois ne converge jamais. Seuls les sites
+    # menés à leur terme sont réutilisés, et seulement si le rapport vient de
+    # cette version du script.
+    previous = [] if args.fresh else load_previous(json_path)
+    already = {r["id"]: r for r in previous if r.get("complete")}
+    if already:
+        print("Reprise : %s site(s) déjà sondés, ils ne seront pas refaits." % len(already))
+        print("          (`--fresh`, ou supprime %s, pour tout reprendre.)"
+              % os.path.basename(json_path))
+    remaining = [s for s in chosen if s.id not in already]
+
+    print("Sondage de %s site(s), %.1fs entre requêtes, abandon après %s essai(s) vide(s)."
+          % (len(remaining), args.delay, args.give_up or "aucun"))
+    print("Sortie : %s" % args.out)
+    print("Le rapport est réécrit après chaque étape : une veille de l'écran ne perd rien.")
+
+    def meta_now(partial: bool) -> dict:
+        return {
+            "when": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+            "requests": scanner.requests,
+            "delay": args.delay,
+            "give_up": args.give_up,
+            "seconds": int(time.time() - started),
+            "python": sys.version.split()[0],
+            "platform": sys.platform,
+            "version": VERSION,
+            "partial": partial,
+            "expected": len(chosen),
+        }
+
+    def write(rows: list[dict]) -> None:
+        """Réécrit les deux fichiers. Appelé à chaque étape, pas à la fin."""
+        ordered = order_by(chosen, list(already.values()) + rows)
+        partial = sum(1 for r in ordered if r.get("complete")) < len(chosen)
+        meta = meta_now(partial)
+        # Fichier temporaire puis renommage : une coupure au milieu de
+        # l'écriture laisserait sinon un rapport tronqué à la place du bon.
+        for path, payload in (
+            (md_path, markdown(ordered, meta)),
+            (json_path, json.dumps({"meta": meta, "sites": ordered},
+                                   ensure_ascii=False, indent=2)),
+        ):
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as handle:
+                handle.write(payload)
+            os.replace(tmp, path)
+
+    scanner = Scanner(args, sink=write)
+    interrupted = False
+    for site in remaining:
         try:
-            reports.append(scanner.scan(site))
+            scanner.scan(site)
         except KeyboardInterrupt:
-            print("\nInterrompu — le rapport porte sur les sites déjà sondés.")
+            print("\nInterrompu — le rapport porte sur ce qui a été sondé jusqu'ici.")
+            interrupted = True
             break
         except Exception as exc:  # un site cassé ne doit pas emporter le scan
             print("  ⚠️ erreur inattendue sur %s : %s: %s" % (site.id, type(exc).__name__, exc))
-            reports.append({"id": site.id, "name": site.name, "url": site.home,
-                            "error": "%s: %s" % (type(exc).__name__, exc)})
+            if scanner.current is None:
+                scanner.current = {"id": site.id, "name": site.name, "url": site.home}
+            scanner.current["error"] = "%s: %s" % (type(exc).__name__, exc)
+            scanner.current["complete"] = True
+        finally:
+            scanner.commit()
 
-    meta = {
-        "when": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-        "requests": scanner.requests,
-        "delay": args.delay,
-        "seconds": int(time.time() - started),
-        "python": sys.version.split()[0],
-        "platform": sys.platform,
-        "version": VERSION,
-    }
-
-    md_path = os.path.join(args.out, "rapport-solveurs.md")
-    json_path = os.path.join(args.out, "rapport-solveurs.json")
-    with open(md_path, "w", encoding="utf-8") as handle:
-        handle.write(markdown(reports, meta))
-    with open(json_path, "w", encoding="utf-8") as handle:
-        json.dump({"meta": meta, "sites": reports}, handle, ensure_ascii=False, indent=2)
+    # Dernier passage par le scanner lui-même : lui appeler `write([])`
+    # directement réécrirait le fichier avec zéro site, et effacerait le scan
+    # entier au moment précis où il vient de se terminer.
+    scanner.flush()
+    reports = order_by(chosen, list(already.values()) + scanner.done)
+    meta = meta_now(sum(1 for r in reports if r.get("complete")) < len(chosen))
+    if interrupted or meta["partial"]:
+        print("\n⚠️ Rapport partiel : %s site(s) sur %s menés à terme. Relance le script, "
+              "il reprendra où il s'est arrêté."
+              % (sum(1 for r in reports if r.get("complete")), len(chosen)))
 
     print("")
     print("=" * 68)

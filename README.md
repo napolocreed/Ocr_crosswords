@@ -425,7 +425,7 @@ qu'elle figure bien dans le HTML reçu. Il joint un extrait du HTML autour de ch
 trouvée : c'est ce qui permet d'écrire le parseur ensuite.
 
 ```bash
-python3 scripts/probe-solvers.py            # scan complet, ~20 min
+python3 scripts/probe-solvers.py            # scan complet, ~3 min
 python3 scripts/probe-solvers.py --only fsolver
 python3 scripts/probe-solvers.py --list
 ```
@@ -434,12 +434,22 @@ Bibliothèque standard uniquement, aucune dépendance : il tourne tel quel sur u
 (Pydroid 3, bouton ▶), ce qui est le seul moyen de le lancer depuis une connexion non filtrée.
 Il produit `rapport-solveurs.md`, `rapport-solveurs.json` et les pages brutes.
 
-Le volume est délibérément minuscule — quelques dizaines de requêtes, deux secondes entre
-chacune, `robots.txt` respecté, agent identifiable. C'est une évaluation de faisabilité, pas une
-aspiration de contenu. Le Wiktionnaire, dont l'API autorise CORS, sert de témoin : si le script
-ne détecte pas CORS **là**, c'est le détecteur qui est en cause et les autres verdicts ne valent
-rien. Quand aucun site ne répond, le rapport le dit et refuse de conclure, au lieu de faire
-passer une panne de réseau pour une absence de source.
+**Il est écrit pour être interrompu.** Le rapport est réécrit à chaque étape — pas à la fin — par
+fichier temporaire puis renommage, si bien qu'une veille d'écran ou une coupure ne coûte rien de
+ce qui a déjà été mesuré ; le fichier porte alors un bandeau « rapport partiel » plutôt que de se
+faire passer pour complet. La relance reprend d'elle-même là où le scan s'était arrêté, en ne
+réutilisant que les sites menés à leur terme et que si le rapport vient de la même version du
+script (`--fresh` pour tout refaire). Un site qui répond sans jamais avoir la solution est
+abandonné au bout de trois essais : ceux qui ont la réponse la donnent tout de suite ou une fois
+sur deux, et insister sur les autres coûtait plus que tout le reste du scan. L'abandon est écrit
+dans le rapport, jamais silencieux.
+
+Le volume reste petit — quelques dizaines de requêtes par site, une demi-seconde entre chacune,
+`robots.txt` et son `Crawl-delay` respectés, agent identifiable. C'est une évaluation de
+faisabilité, pas une aspiration de contenu. Le Wiktionnaire, dont l'API autorise CORS, sert de
+témoin : si le script ne détecte pas CORS **là**, c'est le détecteur qui est en cause et les
+autres verdicts ne valent rien. Quand aucun site ne répond, le rapport le dit et refuse de
+conclure, au lieu de faire passer une panne de réseau pour une absence de source.
 
 ## Limites connues
 
