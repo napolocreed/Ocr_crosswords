@@ -1,5 +1,6 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
 import type { Progress, Puzzle, PuzzleAssets } from '../types'
+import type { CachedClue } from './solvers/types'
 import { emptyProgress } from './puzzle'
 
 interface GrillesDB extends DBSchema {
@@ -21,18 +22,36 @@ interface GrillesDB extends DBSchema {
     key: string
     value: unknown
   }
+  /**
+   * Solutions déjà trouvées pour une définition, quelle que soit la grille.
+   *
+   * Volontairement global plutôt que par grille : les magazines réemploient
+   * beaucoup leurs définitions, si bien que le cache se remplit et qu'une grille
+   * suivante se résout de plus en plus souvent sans réseau.
+   */
+  answers: {
+    key: string
+    value: CachedClue
+  }
 }
 
 let dbPromise: Promise<IDBPDatabase<GrillesDB>> | null = null
 
 function db() {
-  dbPromise ??= openDB<GrillesDB>('grilles', 1, {
-    upgrade(database) {
-      const puzzles = database.createObjectStore('puzzles', { keyPath: 'id' })
-      puzzles.createIndex('by-updated', 'updatedAt')
-      database.createObjectStore('progress', { keyPath: 'puzzleId' })
-      database.createObjectStore('assets', { keyPath: 'puzzleId' })
-      database.createObjectStore('settings')
+  dbPromise ??= openDB<GrillesDB>('grilles', 2, {
+    upgrade(database, oldVersion) {
+      // Chaque palier est gardé : une base déjà en v1 ne doit pas recréer ses
+      // magasins, une base neuve doit les avoir tous.
+      if (oldVersion < 1) {
+        const puzzles = database.createObjectStore('puzzles', { keyPath: 'id' })
+        puzzles.createIndex('by-updated', 'updatedAt')
+        database.createObjectStore('progress', { keyPath: 'puzzleId' })
+        database.createObjectStore('assets', { keyPath: 'puzzleId' })
+        database.createObjectStore('settings')
+      }
+      if (oldVersion < 2) {
+        database.createObjectStore('answers', { keyPath: 'clue' })
+      }
     },
   })
   return dbPromise
@@ -89,6 +108,24 @@ export async function dropStraightenedImage(puzzleId: string): Promise<void> {
   if (!assets?.straightened) return
   const { straightened: _dropped, ...rest } = assets
   await saveAssets(rest as PuzzleAssets)
+}
+
+export async function getCachedClue(key: string): Promise<CachedClue | undefined> {
+  return (await db()).get('answers', key)
+}
+
+export async function saveCachedClue(entry: CachedClue): Promise<void> {
+  await (await db()).put('answers', entry)
+}
+
+/** Combien de définitions ont déjà une réponse en réserve, hors-ligne. */
+export async function countCachedClues(): Promise<number> {
+  return (await db()).count('answers')
+}
+
+/** Vide la réserve. Le seul moyen de reprendre à zéro si le site a changé. */
+export async function clearCachedClues(): Promise<void> {
+  await (await db()).clear('answers')
 }
 
 export async function getSetting<T>(key: string, fallback: T): Promise<T> {

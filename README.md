@@ -6,8 +6,13 @@ Photographie une grille, l'app détecte sa structure et lit les définitions par
 ce qui a été mal lu tant que le magazine est encore sous la main, et tu emportes ta bibliothèque
 de grilles dans ta poche.
 
-**100 % frontend, 100 % local.** Aucun serveur, aucun compte : les photos, la reconnaissance et
-les grilles ne quittent jamais l'appareil. Déployable sur GitHub Pages.
+**100 % frontend, aucun serveur, aucun compte.** Les photos, la reconnaissance et les grilles ne
+quittent jamais l'appareil. Déployable sur GitHub Pages.
+
+Une seule chose sort, et seulement si tu l'autorises : les **jokers** cherchent la solution d'une
+définition sur `motscroises.fr`, ce qui envoie le **texte de cette définition** — rien d'autre, et
+sans cookie. C'est refusé par défaut, demandé explicitement au premier usage, révocable, et sans
+serveur intermédiaire puisque le site est appelé directement par le navigateur.
 
 ## Ce que ça fait
 
@@ -25,6 +30,10 @@ les grilles ne quittent jamais l'appareil. Déployable sur GitHub Pages.
   quand on hésite.
 - **Mot mystère** — la définition en marge et les cases numérotées qui l'alimentent. La réponse
   s'assemble toute seule à mesure que la grille se remplit, dans une barre sous la grille.
+- **Indices et solutions** — 5 à 10 jokers « indice » qui révèlent une lettre, 1 à 3 jokers
+  « solution » qui révèlent un mot, proportionnés à la taille de la grille. L'indice choisit la
+  case la plus utile : de préférence vide plutôt que fausse, et traversée par un autre mot quand
+  c'est possible. Un joker qui ne trouve rien n'est pas décompté.
 - **Bibliothèque hors-ligne** — sauvegarde automatique, export/import de « packs » de grilles
   en un fichier JSON pour en emporter plusieurs d'un coup ou les passer sur un autre téléphone.
 

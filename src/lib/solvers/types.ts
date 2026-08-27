@@ -89,3 +89,24 @@ export function dedupe(candidates: Candidate[]): Candidate[] {
 export function ofLength(candidates: Candidate[], length: number): Candidate[] {
   return candidates.filter((candidate) => candidate.length === length)
 }
+
+/**
+ * La définition réduite à une clé de cache.
+ *
+ * Deux magazines écrivant « ASTRE DU JOUR » et « Astre  du jour » posent la même
+ * question ; les distinguer ferait interroger le site deux fois pour rien.
+ */
+export function clueKey(clue: string): string {
+  return deaccent(clue).toUpperCase().replace(/\s+/g, ' ').trim()
+}
+
+/** Ce qu'on garde en réserve pour une définition déjà cherchée. */
+export interface CachedClue {
+  /** La clé : `clueKey(definition)`. */
+  clue: string
+  candidates: Candidate[]
+  /** Quand la réponse a été obtenue, pour savoir quand la redemander. */
+  fetchedAt: number
+  /** L'identifiant du solveur qui a répondu. */
+  source: string
+}

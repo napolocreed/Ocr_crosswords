@@ -13,7 +13,8 @@
     "smoke": "node scripts/smoke.mjs",
     "dev:detect": "node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/dev-detect.mjs",
     "dev:ocr": "node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/dev-ocr.mjs",
-    "dev:solvers": "node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/dev-solvers.mjs"
+    "dev:solvers": "node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/dev-solvers.mjs",
+    "dev:jokers": "node --experimental-strip-types --import ./scripts/register-ts.mjs scripts/dev-jokers.mjs"
   },
   "dependencies": {
     "idb": "^8.0.3",
