@@ -152,6 +152,14 @@ export interface Puzzle {
   mystery?: Mystery
 }
 
+/** Jokers already used on a grid. */
+export interface Spent {
+  /** Indices dépensés — chacun a révélé une lettre. */
+  hints: number
+  /** Solutions dépensées — chacune a révélé un mot entier. */
+  solutions: number
+}
+
 /** A player's state for one puzzle. Kept apart from the puzzle itself so a
  *  puzzle can be shared or re-imported without dragging answers along. */
 export interface Progress {
@@ -162,6 +170,22 @@ export interface Progress {
   drafts: Record<string, string[]>
   updatedAt: number
   completedAt?: number
+  /**
+   * Ce qui a été dépensé, pas ce qui reste.
+   *
+   * L'allocation se déduit de la grille (voir `allowanceFor`), et une grille
+   * peut changer de taille en relecture. Stocker le restant ferait alors dériver
+   * le compte ; stocker le dépensé le laisse juste.
+   */
+  spent?: Spent
+  /**
+   * Cases dont la lettre vient d'un joker : « r,c ».
+   *
+   * Elles sont certaines, à la différence de ce que le joueur tape. Ça leur vaut
+   * un rendu distinct — on doit voir ce qui a été donné — et ça sert à choisir
+   * entre plusieurs solutions possibles pour un même mot.
+   */
+  revealed?: string[]
 }
 
 /** Per-puzzle heavy assets, stored separately to keep library loads light. */

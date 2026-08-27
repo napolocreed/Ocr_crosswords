@@ -31,6 +31,11 @@
   --cell-block: #39414f;
   --cell-active: #ffd66b;
   --cell-word: #a8d1ff;
+  /* Lettre donnée par un joker. Neutre exprès : une teinte bleue se serait
+     fondue dans le fond du mot actif, et le vert ou le rouge auraient laissé
+     croire à un jugement « juste / faux ». Contraste ≥ 6:1 sur les trois fonds
+     de case — blanc, bleu du mot courant, jaune de la case active. */
+  --cell-given: #3d4657;
   --cell-rule: #6b7689;
   /* Arrows are struck into the letter squares, under the letters, so they read
      clearly against every square colour without competing with the writing. */
@@ -488,6 +493,20 @@ textarea:focus {
   outline-offset: -2px;
 }
 
+/*
+ * Une lettre donnée par un joker.
+ *
+ * Marquée par la couleur du texte plutôt que par un fond : le fond porte déjà
+ * la sélection et le mot courant, et un troisième fond entrerait en conflit
+ * avec eux. La lettre reste parfaitement lisible, mais on voit d'un coup d'œil
+ * ce que la grille doit à l'aide — sinon une grille finie ne dit plus rien de
+ * la partie qu'on a jouée.
+ */
+.cell.revealed {
+  color: var(--cell-given);
+  font-style: italic;
+}
+
 .cell .clue-text {
   font-weight: 600;
   /* clueTypography.ts measures against this exact figure. */
@@ -637,6 +656,88 @@ textarea:focus {
   font-size: 12px;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------------ jokers */
+
+.cluebar .jokers {
+  flex: none;
+  display: flex;
+  gap: 6px;
+}
+
+.joker {
+  /* Assez large pour le pouce sans voler de place à la définition, qui est ce
+     que cette barre existe pour montrer. */
+  min-width: 44px;
+  height: 38px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 15px;
+}
+
+.joker em {
+  font-style: normal;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.joker:active:not([disabled]) {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+
+.joker[disabled] {
+  opacity: 0.4;
+}
+
+.joker-counts {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.joker-count {
+  flex: 1;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  text-align: center;
+}
+
+.joker-count .glyph {
+  display: block;
+  font-size: 20px;
+  margin-bottom: 4px;
+}
+
+.joker-count strong {
+  display: block;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+
+.joker-count .of {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-faint);
+}
+
+.joker-count .label {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
 }
 
 /* --------------------------------------------------------------- keyboard */

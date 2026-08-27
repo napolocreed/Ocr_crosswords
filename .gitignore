@@ -15,3 +15,11 @@ public/tesseract/
 # Test photos stay local: magazine pages are copyrighted, and the repo is meant
 # to stay small. Drop your own shots here to calibrate (see README).
 fixtures/
+
+# Output of the solver survey (`scripts/probe-solvers.py`). The report is a
+# measurement of one moment on one connection, and the raw pages belong to the
+# sites they came from — neither has any business in the repo.
+__pycache__/
+rapport-solveurs.md
+rapport-solveurs.json
+dumps/

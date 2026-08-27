@@ -91,6 +91,14 @@ interface Props {
   highlights?: Set<string>
   /** "r,c" → position in the mystery answer, shown as a small corner badge. */
   mysteryPositions?: Map<string, number>
+  /**
+   * Cases dont la lettre vient d'un joker.
+   *
+   * Rendues à part : une lettre donnée n'a pas le même statut qu'une lettre
+   * trouvée, et le joueur doit pouvoir voir d'un coup d'œil ce qu'il doit à
+   * l'aide — sans quoi la grille finie ne lui apprend plus rien sur sa partie.
+   */
+  revealed?: ReadonlySet<string>
 }
 
 interface Transform {
@@ -108,6 +116,7 @@ export function GridView({
   onSelectClueCell,
   highlights,
   mysteryPositions,
+  revealed,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const [transform, setTransform] = useState<Transform>({ zoom: 1, x: 0, y: 0 })
@@ -599,6 +608,7 @@ export function GridView({
             if (cell.kind === 'clue') classes.push('clue')
             if (cell.kind === 'letter' && wordKeys.has(key)) classes.push('in-word')
             if (key === activeKey) classes.push('active')
+            if (letter && revealed?.has(key)) classes.push('revealed')
             if (
               cell.kind === 'clue' &&
               activeWord &&

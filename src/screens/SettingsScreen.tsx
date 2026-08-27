@@ -124,6 +124,12 @@ export function SettingsScreen({ onBack, onToast }: Props) {
             Tout se passe sur ton téléphone : les photos, la reconnaissance et tes grilles ne
             quittent jamais l’appareil. Aucun compte, aucun serveur.
           </p>
+          {/* La seule exception, dite ici plutôt que noyée dans des conditions
+              d'utilisation : la phrase au-dessus serait fausse sans elle. */}
+          <p className="muted" style={{ margin: '8px 0 0' }}>
+            Seule exception : si tu actives la recherche en ligne des indices, le texte de la
+            définition cherchée est envoyé à motscroises.fr — rien d’autre, et sans cookie.
+          </p>
           {/* An offline app can sit a version behind without looking like it, so
               the build has to be readable from the phone itself. */}
           <p className="muted" data-role="build" style={{ margin: '8px 0 0', fontSize: 12 }}>

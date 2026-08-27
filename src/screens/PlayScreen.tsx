@@ -1,12 +1,36 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ARROW_GLYPH, ARROW_LABEL, type Progress, type Puzzle } from '../types'
 import { GridView } from '../components/GridView'
 import { Keyboard } from '../components/Keyboard'
 import { MysteryBar } from '../components/MysteryBar'
-import { usePlayState } from '../state/usePlayState'
+import { HintsSheet } from '../components/HintsSheet'
+import { type RevealOutcome, usePlayState } from '../state/usePlayState'
 import { Sheet } from '../components/Sheet'
 import { mysteryPositions, readMysteryAnswer } from '../lib/puzzle'
 import { buildShareLink, offerShareLink } from '../lib/shareLink'
+import { getSetting } from '../lib/db'
+import { CONSENT_SETTING } from '../lib/solvers'
+
+/** Ce qu'on dit au joueur, sans jamais laisser croire qu'un joker a été perdu. */
+function outcomeMessage(outcome: RevealOutcome): string {
+  if (outcome.ok) {
+    return outcome.kind === 'letter'
+      ? `Lettre révélée : ${outcome.letter}`
+      : `Solution : ${outcome.answer}`
+  }
+  switch (outcome.reason) {
+    case 'no-word':
+      return 'Touche d’abord une définition'
+    case 'none-left':
+      return 'Plus de joker de ce type sur cette grille'
+    case 'already-solved':
+      return 'Ce mot est déjà juste — joker non décompté'
+    case 'unavailable':
+      return 'Recherche impossible (réseau) — joker non décompté'
+    case 'unknown':
+      return 'Solution inconnue pour cette définition — joker non décompté'
+  }
+}
 
 interface Props {
   puzzle: Puzzle
@@ -27,6 +51,37 @@ export function PlayScreen({ puzzle, progress, onBack, onReview, onToast }: Prop
   const play = usePlayState(puzzle, progress)
   const [menuOpen, setMenuOpen] = useState(false)
   const [mysteryOpen, setMysteryOpen] = useState(false)
+  const [hintsOpen, setHintsOpen] = useState(false)
+  const [online, setOnline] = useState(false)
+  const [seeking, setSeeking] = useState(false)
+
+  useEffect(() => {
+    void getSetting(CONSENT_SETTING, false).then(setOnline)
+  }, [])
+
+  const spend = async (whole: boolean) => {
+    // Premier usage : le panneau explique ce qui part de l'appareil, et attend
+    // une réponse. Rien n'est envoyé tant qu'elle n'est pas donnée.
+    if (!online) {
+      setHintsOpen(true)
+      return
+    }
+    if (seeking) return
+    const left = whole ? play.remaining.solutions : play.remaining.hints
+    if (left <= 0) {
+      onToast('Plus de joker de ce type sur cette grille')
+      return
+    }
+    if (whole && !confirm(`Révéler « ${play.activeWord?.clueText || 'ce mot'} » en entier ?`)) {
+      return
+    }
+    setSeeking(true)
+    try {
+      onToast(outcomeMessage(whole ? await play.revealWord(true) : await play.revealLetter(true)))
+    } finally {
+      setSeeking(false)
+    }
+  }
 
   const positions = useMemo(() => mysteryPositions(puzzle), [puzzle])
   const mysteryAnswer = useMemo(
@@ -68,6 +123,7 @@ export function PlayScreen({ puzzle, progress, onBack, onReview, onToast }: Prop
         onSelectCell={play.selectCell}
         onSelectClueCell={play.selectClueCell}
         mysteryPositions={positions}
+        revealed={play.revealed}
       />
 
       {puzzle.mystery && puzzle.mystery.slots.length > 0 && (
@@ -100,6 +156,34 @@ export function PlayScreen({ puzzle, progress, onBack, onReview, onToast }: Prop
         ) : (
           <span className="text placeholder">Touche une case pour commencer</span>
         )}
+        {/* Les jokers sont ici et pas dans un menu : c'est en butant sur une
+            définition qu'on veut de l'aide, et c'est cette ligne-là qu'on
+            regarde à ce moment. */}
+        <div className="jokers" role="group" aria-label="Jokers">
+          <button
+            type="button"
+            className="joker"
+            disabled={seeking || play.remaining.hints <= 0}
+            aria-label={`Indice — une lettre (${play.remaining.hints} restants)`}
+            onClick={() => void spend(false)}
+          >
+            {/* La recherche peut prendre plusieurs secondes sur un réseau lent.
+                Sans ce point d'attente, le bouton se grise sans rien dire et on
+                croit l'appui perdu. */}
+            <span aria-hidden="true">{seeking ? '⋯' : '💡'}</span>
+            <em>{play.remaining.hints}</em>
+          </button>
+          <button
+            type="button"
+            className="joker"
+            disabled={seeking || play.remaining.solutions <= 0}
+            aria-label={`Solution — le mot entier (${play.remaining.solutions} restantes)`}
+            onClick={() => void spend(true)}
+          >
+            <span aria-hidden="true">{seeking ? '⋯' : '🔑'}</span>
+            <em>{play.remaining.solutions}</em>
+          </button>
+        </div>
       </div>
 
       <Keyboard
@@ -133,8 +217,31 @@ export function PlayScreen({ puzzle, progress, onBack, onReview, onToast }: Prop
         </Sheet>
       )}
 
+      {hintsOpen && (
+        <HintsSheet
+          words={play.words}
+          allowance={play.allowance}
+          remaining={play.remaining}
+          online={online}
+          onOnlineChange={setOnline}
+          onClose={() => setHintsOpen(false)}
+          onToast={onToast}
+        />
+      )}
+
       {menuOpen && (
         <Sheet title={puzzle.title} onClose={() => setMenuOpen(false)}>
+          <button
+            type="button"
+            className="sheet-action"
+            onClick={() => {
+              setMenuOpen(false)
+              setHintsOpen(true)
+            }}
+          >
+            <span className="glyph">💡</span>
+            Indices et solutions
+          </button>
           <button
             type="button"
             className="sheet-action"

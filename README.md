@@ -6,8 +6,13 @@ Photographie une grille, l'app détecte sa structure et lit les définitions par
 ce qui a été mal lu tant que le magazine est encore sous la main, et tu emportes ta bibliothèque
 de grilles dans ta poche.
 
-**100 % frontend, 100 % local.** Aucun serveur, aucun compte : les photos, la reconnaissance et
-les grilles ne quittent jamais l'appareil. Déployable sur GitHub Pages.
+**100 % frontend, aucun serveur, aucun compte.** Les photos, la reconnaissance et les grilles ne
+quittent jamais l'appareil. Déployable sur GitHub Pages.
+
+Une seule chose sort, et seulement si tu l'autorises : les **jokers** cherchent la solution d'une
+définition sur `motscroises.fr`, ce qui envoie le **texte de cette définition** — rien d'autre, et
+sans cookie. C'est refusé par défaut, demandé explicitement au premier usage, révocable, et sans
+serveur intermédiaire puisque le site est appelé directement par le navigateur.
 
 ## Ce que ça fait
 
@@ -25,6 +30,10 @@ les grilles ne quittent jamais l'appareil. Déployable sur GitHub Pages.
   quand on hésite.
 - **Mot mystère** — la définition en marge et les cases numérotées qui l'alimentent. La réponse
   s'assemble toute seule à mesure que la grille se remplit, dans une barre sous la grille.
+- **Indices et solutions** — 5 à 10 jokers « indice » qui révèlent une lettre, 1 à 3 jokers
+  « solution » qui révèlent un mot, proportionnés à la taille de la grille. L'indice choisit la
+  case la plus utile : de préférence vide plutôt que fausse, et traversée par un autre mot quand
+  c'est possible. Un joker qui ne trouve rien n'est pas décompté.
 - **Bibliothèque hors-ligne** — sauvegarde automatique, export/import de « packs » de grilles
   en un fichier JSON pour en emporter plusieurs d'un coup ou les passer sur un autre téléphone.
 
@@ -394,6 +403,136 @@ de suivre chaque frontière. C'est séduisant — vingt indices par bande au lie
 la grille commence à x=85), et livrées à elles-mêmes elles se calent sur le bord de
 page et la reliure. La seconde photo y perdait tout son accord de cadre (0,83 →
 0,77) et trois cases-définitions.
+
+## Indices et solutions : l'état de la question
+
+Le projet vise des jokers — 5 à 10 « indices » qui révèlent une lettre, 1 à 3 « solutions » qui
+révèlent un mot. Une grille arrive ici par la photo d'un magazine : l'app connaît les
+définitions et le nombre de cases, **jamais les réponses**. Un joker doit donc puiser dans un
+corrigé, et ce corrigé doit exister avant que le joueur ne voie quoi que ce soit — sinon
+l'aider revient à lui montrer le mot entier, et le joker « une lettre » perd tout son sens.
+
+Reste à savoir d'où vient ce corrigé. Les sites français de solutions (FSolver, CommeUneFleche,
+Motscroises.fr, Dico-Mots…) sont nombreux, mais aucun ne publie d'API, et dCode refuse
+explicitement l'accès programmatique. Il y a exactement quatre issues, et le choix entre elles
+n'est pas une question d'opinion :
+
+1. **Un site renvoie un en-tête CORS permissif** — la PWA l'appelle directement, GitHub Pages
+   suffit, la promesse « aucun serveur » tient.
+2. **Un site publie un sitemap listant une page par définition** — on en tire un jeu de données
+   hors-ligne une bonne fois, et GitHub Pages suffit encore.
+3. **Le site répond mais sans CORS** — il faut un relais côté serveur, donc renoncer au
+   « 100 % local ».
+4. **Rien de tout ça** — le corrigé se saisit ou s'importe à la main.
+
+`scripts/probe-solvers.py` tranche entre ces quatre issues par la mesure. Il sonde quinze sites
+et, pour chacun, relève la joignabilité, ce que `robots.txt` autorise et le `Crawl-delay`
+demandé, la taille réelle des sitemaps — index déroulé d'un cran, parce que « 18 URL » sur un
+index ce sont dix-huit sous-sitemaps et pas dix-huit pages — et les en-têtes CORS, en requête
+simple *et* en préflight.
+
+Pour interroger un site, il n'invente pas d'URL : il lit les formulaires réellement présents
+dans les pages, et **déduit la forme des URL des liens du site lui-même** (`/solution/{slug}`,
+`/definition/{slug}/{n}`…) avant de la réessayer avec la définition cherchée. Ce dernier point
+est né d'un échec : au premier scan, le seul site autorisant CORS — donc le seul capable de
+dispenser d'un serveur — est passé à travers parce qu'il n'expose aucun formulaire et qu'aucune
+URL devinée de l'extérieur ne tombait juste.
+
+Il interroge ensuite chaque site sur quatre définitions dont la réponse est connue d'avance et
+vérifie qu'elle figure bien dans le HTML reçu, en joignant un extrait du HTML autour de chaque
+réponse trouvée : c'est ce qui permet d'écrire le parseur ensuite.
+
+```bash
+python3 scripts/probe-solvers.py            # scan complet, ~3 min
+python3 scripts/probe-solvers.py --only fsolver
+python3 scripts/probe-solvers.py --list
+```
+
+Bibliothèque standard uniquement, aucune dépendance : il tourne tel quel sur un téléphone
+(Pydroid 3, bouton ▶), ce qui est le seul moyen de le lancer depuis une connexion non filtrée.
+Il produit `rapport-solveurs.md`, `rapport-solveurs.json` et les pages brutes.
+
+**Où le rapport atterrit** compte autant que son contenu. Sur Android le stockage partagé passe
+avant le dossier du script (`Download/sonde-mots-fleches/`), parce que le dossier du script est
+celui de Pydroid — `/data/user/0/ru.iiec.pydroid3/files`, parfaitement inscriptible et
+parfaitement invisible depuis le gestionnaire de fichiers. Un premier rapport y a été écrit puis
+perdu faute de pouvoir l'atteindre. Quand seul ce dossier privé est disponible, le script
+n'insiste pas : il affiche le rapport entier dans le terminal, entre deux repères, prêt à copier
+— on ne peut pas compter sur une option en ligne de commande quand l'appareil n'a qu'un bouton ▶
+(`--print` force cet affichage partout ailleurs).
+
+**Il est écrit pour être interrompu.** Le rapport est réécrit à chaque étape — pas à la fin — par
+fichier temporaire puis renommage, si bien qu'une veille d'écran ou une coupure ne coûte rien de
+ce qui a déjà été mesuré ; le fichier porte alors un bandeau « rapport partiel » plutôt que de se
+faire passer pour complet. La relance reprend d'elle-même là où le scan s'était arrêté, en ne
+réutilisant que les sites menés à leur terme et que si le rapport vient de la même version du
+script (`--fresh` pour tout refaire). Un site qui répond sans jamais avoir la solution est
+abandonné au bout de trois essais : ceux qui ont la réponse la donnent tout de suite ou une fois
+sur deux, et insister sur les autres coûtait plus que tout le reste du scan. L'abandon est écrit
+dans le rapport, jamais silencieux — et **un site qui autorise CORS n'est jamais abandonné**,
+puisque c'est le seul type capable de rendre le serveur inutile.
+
+### Ce que le sondage a donné
+
+Premier scan complet, 16 sites, 205 requêtes. Le témoin fonctionne — le Wiktionnaire ressort bien
+en `Access-Control-Allow-Origin: *` — donc les verdicts CORS tiennent.
+
+| Site | Verdict | Ce qu'on en sait |
+| --- | --- | --- |
+| **MotsCroises.fr** | **direct** | `/sujet/{definition-en-tirets}`. Le seul dont `Access-Control-Allow-Origin` couvre l'origine GitHub Pages — **sur la page de résultats elle-même**, préflight OPTIONS compris. Trouvé grâce aux gabarits déduits de ses propres liens ; au premier scan il était passé à travers. |
+| **FSolver** | relais requis | `/mots-fleches/{definition-en-tirets}`. Répond aux 4 définitions, résultats balisés en microdonnées schema.org. Aucun en-tête CORS, ni sur l'accueil ni sur les résultats. |
+| **Solutions-Mots-Fleches** | relais requis | `?definition={definition}`. Répond, microdonnées schema.org également. Pas de CORS. |
+| **Mots-Croises-Solutions** | relais requis | `/croises/-/{definition-en-tirets}`. Répond aux 3 définitions d'essai. Pas de CORS. |
+| **Mots-Croises.ch** | non mesuré | Répondait via son formulaire au sondage général ; l'URL n'a pas été retrouvée à la passe ciblée. Pas de CORS sur l'accueil. |
+| **CommeUneFleche**, **Le Robert** | rendu JS | HTML servi vide : un fetch n'y verra rien. |
+| **dCode** | exclu | Refuse l'accès programmatique par écrit. |
+
+Les autres (Dico-Mots, MSolver, MotsAvec, Index Savant, Sport Cérébral, Le Mot Malin, 1mot.net)
+n'ont rien rendu d'exploitable.
+
+**La question d'architecture est donc tranchée : l'app reste sur GitHub Pages, sans serveur.**
+MotsCroises.fr est appelable directement depuis la PWA. Les trois autres sources ne sont
+utilisables que derrière un relais, et ne seront donc envisagées que si la couverture de la
+première se révèle insuffisante — le parseur FSolver est déjà écrit dans ce cas.
+
+`src/lib/solvers/` lit ces pages ; `npm run dev:solvers` vérifie les parseurs contre le HTML que
+le sondage a réellement capturé, pièges de la page compris — le bloc JSON-LD de FSolver répète
+les solutions dans des liens qui n'en sont pas.
+
+`scripts/probe-motscroises.py` est la sonde de suivi, dédiée au site retenu. Elle a servi à
+trancher le point ci-dessus — le sondage général mesurait CORS sur les pages d'accueil, alors que
+la PWA appelle des pages de résultats, et un site peut autoriser l'une sans l'autre — puis à
+relever ce qu'il fallait pour lire ces pages. Autonome, sans argument, sans dépendance, rapport
+affiché dans le terminal : elle est faite pour un téléphone qui n'a qu'un bouton ▶.
+
+Trois choses en sont ressorties.
+
+**La forme d'URL n'est pas un obstacle.** Six graphies de `FLEUVE D'ÉGYPTE` répondent
+indifféremment — apostrophe en tiret, supprimée, conservée, accent conservé, majuscules ou
+minuscules. Le site publie ses propres liens en capitales avec l'apostrophe en tiret
+(`/sujet/DE-L-ASTRE-DU-JOUR`), c'est donc cette forme que l'app demande.
+
+**Ce qui diffère d'un site à l'autre, c'est la couverture.** Le témoin le montre :
+`oiseau-de-malheur` répond 200 sans contenir CORBEAU, là où FSolver l'a. Une définition absente
+n'est donc pas un bug à corriger mais un trou à assumer — ou à combler par une seconde source.
+
+**Le filtre par motif n'est pas démontré**, et le test qui devait le prouver était mal conçu :
+il cherchait la réponse n'importe où dans la page, alors que l'encart de tête liste les
+meilleures solutions quel que soit le filtre. `Z*****` et une longueur de 9 renvoient SOLEIL
+comme les autres, ce qui ne prouve ni que le filtre marche ni qu'il ne marche pas. L'app filtre
+donc par longueur elle-même, ce qu'elle sait faire de toute façon.
+
+La page, elle, porte ses solutions à deux endroits : un encart de tête groupé par longueur — le
+seul qui les couvre toutes — et un tableau qui n'en montre qu'une mais donne la forme canonique
+de chaque mot dans son lien. Le reste de la page est plein de mots qui n'en sont pas : synonymes
+et « sujets similaires » pointent vers `/sujet/…`, les solutions vers `/solution/…`.
+
+Le volume reste petit — quelques dizaines de requêtes par site, une demi-seconde entre chacune,
+`robots.txt` et son `Crawl-delay` respectés, agent identifiable. C'est une évaluation de
+faisabilité, pas une aspiration de contenu. Le Wiktionnaire, dont l'API autorise CORS, sert de
+témoin : si le script ne détecte pas CORS **là**, c'est le détecteur qui est en cause et les
+autres verdicts ne valent rien. Quand aucun site ne répond, le rapport le dit et refuse de
+conclure, au lieu de faire passer une panne de réseau pour une absence de source.
 
 ## Limites connues
 

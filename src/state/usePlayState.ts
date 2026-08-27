@@ -7,6 +7,14 @@ import {
 } from '../types'
 import { buildWords, indexWords, isComplete, type Word } from '../lib/puzzle'
 import { saveProgress } from '../lib/db'
+import { answerForWord, lettersOf } from '../lib/hints'
+import {
+  type Allowance,
+  NO_SPEND,
+  allowanceFor,
+  pickRevealPosition,
+  remainingJokers,
+} from '../lib/jokers'
 
 /**
  * Solving state: which square is active, what gets typed where, and when it is
@@ -20,6 +28,22 @@ import { saveProgress } from '../lib/db'
 /** Autosave delay: long enough to coalesce fast typing, short enough to be safe. */
 const SAVE_DEBOUNCE_MS = 400
 
+/**
+ * Ce qu'un joker a donné, ou pourquoi il n'a rien donné.
+ *
+ * Les échecs sont distingués parce qu'ils ne se valent pas : `unavailable` veut
+ * dire qu'on n'a pas pu demander, `unknown` que le site ne connaît pas la
+ * définition. Ni l'un ni l'autre ne coûte de joker — on ne fait pas payer une
+ * aide qu'on n'a pas rendue.
+ */
+export type RevealOutcome =
+  | { ok: true; kind: 'letter'; letter: string }
+  | { ok: true; kind: 'word'; answer: string }
+  | {
+      ok: false
+      reason: 'no-word' | 'none-left' | 'already-solved' | 'unavailable' | 'unknown'
+    }
+
 export interface PlayState {
   progress: Progress
   words: Word[]
@@ -31,6 +55,11 @@ export interface PlayState {
   complete: boolean
   filled: number
   total: number
+  /** Jokers alloués par cette grille, et ce qu'il en reste. */
+  allowance: Allowance
+  remaining: Allowance
+  /** Cases dont la lettre vient d'un joker. */
+  revealed: ReadonlySet<string>
   setDraftMode: (value: boolean) => void
   selectCell: (r: number, c: number) => void
   selectClueCell: (r: number, c: number) => void
@@ -40,6 +69,10 @@ export interface PlayState {
   nextWord: () => void
   previousWord: () => void
   resetAll: () => void
+  /** Dépense un indice : une lettre du mot courant. */
+  revealLetter: (online: boolean) => Promise<RevealOutcome>
+  /** Dépense une solution : le mot courant en entier. */
+  revealWord: (online: boolean) => Promise<RevealOutcome>
 }
 
 export function usePlayState(puzzle: Puzzle, initialProgress: Progress): PlayState {
@@ -81,7 +114,21 @@ export function usePlayState(puzzle: Puzzle, initialProgress: Progress): PlaySta
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pending = useRef<Progress | null>(null)
 
+  /*
+   * L'état le plus récent, lisible hors du rendu.
+   *
+   * Chercher une solution prend le temps d'un aller-retour réseau, pendant lequel
+   * le joueur continue de taper. Écrire à partir de l'état capturé au moment du
+   * clic effacerait ces lettres-là. Tout ce qui écrit après une attente relit
+   * donc cette référence.
+   */
+  const latest = useRef(progress)
+  useEffect(() => {
+    latest.current = progress
+  }, [progress])
+
   const commit = useCallback((next: Progress) => {
+    latest.current = next
     setProgress(next)
     pending.current = next
     if (saveTimer.current) clearTimeout(saveTimer.current)
@@ -243,9 +290,89 @@ export function usePlayState(puzzle: Puzzle, initialProgress: Progress): PlaySta
   }, [activeCell, progress, commit])
 
   const resetAll = useCallback(() => {
-    commit({ ...progress, letters: {}, drafts: {}, updatedAt: Date.now() })
+    // Recommencer rend aussi les jokers : la grille repart vierge, l'aide avec.
+    commit({
+      ...progress,
+      letters: {},
+      drafts: {},
+      revealed: [],
+      spent: { ...NO_SPEND },
+      updatedAt: Date.now(),
+    })
     setCursor(0)
   }, [progress, commit])
+
+  /* ------------------------------------------------------------------ jokers */
+
+  const revealedKeys = useMemo(() => new Set(progress.revealed ?? []), [progress.revealed])
+  const allowance = useMemo(() => allowanceFor(playable.length), [playable.length])
+  const remaining = useMemo(
+    () => remainingJokers(allowance, progress.spent),
+    [allowance, progress.spent],
+  )
+
+  /** Positions du mot qu'un autre mot traverse : une lettre y sert deux fois. */
+  const crossingOf = useCallback(
+    (word: Word) =>
+      word.cells.map(({ r, c }) => (index.byCell.get(cellKey(r, c))?.length ?? 0) > 1),
+    [index],
+  )
+
+  const reveal = useCallback(
+    async (word: Word | null, whole: boolean, online: boolean): Promise<RevealOutcome> => {
+      if (!word || word.cells.length === 0) return { ok: false, reason: 'no-word' }
+
+      const before = latest.current
+      const left = remainingJokers(allowance, before.spent)
+      if ((whole ? left.solutions : left.hints) <= 0) return { ok: false, reason: 'none-left' }
+
+      const result = await answerForWord(word, before, new Set(before.revealed ?? []), online)
+      if (!result.ok) return { ok: false, reason: result.reason }
+
+      // Relu après l'attente : le joueur a pu remplir des cases entre-temps, et
+      // les écraser avec l'état d'il y a trois secondes perdrait sa frappe.
+      const current = latest.current
+      const nowRevealed = new Set(current.revealed ?? [])
+      const { typed } = lettersOf(word, current, nowRevealed)
+
+      const wrong = word.cells
+        .map((_, i) => i)
+        .filter((i) => typed[i] !== result.answer[i])
+      const positions = whole
+        ? wrong
+        : (() => {
+            const at = pickRevealPosition(result.answer, typed, crossingOf(word))
+            return at === null ? [] : [at]
+          })()
+      // Rien à montrer : le mot est déjà juste. Le joker reste en poche.
+      if (positions.length === 0) return { ok: false, reason: 'already-solved' }
+
+      const letters = { ...current.letters }
+      const drafts = { ...current.drafts }
+      for (const i of positions) {
+        const cell = word.cells[i]!
+        const key = cellKey(cell.r, cell.c)
+        letters[key] = result.answer[i]!
+        delete drafts[key]
+        nowRevealed.add(key)
+      }
+      commit({
+        ...current,
+        letters,
+        drafts,
+        revealed: [...nowRevealed],
+        spent: {
+          hints: (current.spent?.hints ?? 0) + (whole ? 0 : 1),
+          solutions: (current.spent?.solutions ?? 0) + (whole ? 1 : 0),
+        },
+        updatedAt: Date.now(),
+      })
+      return whole
+        ? { ok: true, kind: 'word', answer: result.answer }
+        : { ok: true, kind: 'letter', letter: result.answer[positions[0]!]! }
+    },
+    [allowance, crossingOf, commit],
+  )
 
   /* --------------------------------------------------------------- reporting */
 
@@ -285,6 +412,9 @@ export function usePlayState(puzzle: Puzzle, initialProgress: Progress): PlaySta
     complete,
     filled,
     total,
+    allowance,
+    remaining,
+    revealed: revealedKeys,
     setDraftMode,
     selectCell,
     selectClueCell,
@@ -294,5 +424,7 @@ export function usePlayState(puzzle: Puzzle, initialProgress: Progress): PlaySta
     nextWord: () => stepWord(1),
     previousWord: () => stepWord(-1),
     resetAll,
+    revealLetter: (online: boolean) => reveal(activeWord, false, online),
+    revealWord: (online: boolean) => reveal(activeWord, true, online),
   }
 }
